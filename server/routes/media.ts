@@ -66,10 +66,21 @@ mediaRoutes.get('/', async (req, res, next) => {
       };
   }
 
+  let mediaTypeFilter: MediaType | undefined = undefined;
+  switch (req.query.mediaType) {
+    case 'movie':
+      mediaTypeFilter = MediaType.MOVIE;
+      break;
+    case 'tv':
+      mediaTypeFilter = MediaType.TV;
+      break;
+  }
+
   let whereClause: FindOneOptions<Media>['where'];
-  if (statusFilter || req.query.sort === 'mediaAdded') {
+  if (statusFilter || mediaTypeFilter || req.query.sort === 'mediaAdded') {
     whereClause = {};
     if (statusFilter) whereClause.status = statusFilter;
+    if (mediaTypeFilter) whereClause.mediaType = mediaTypeFilter;
     if (req.query.sort === 'mediaAdded')
       whereClause.mediaAddedAt = Not(IsNull());
   }
