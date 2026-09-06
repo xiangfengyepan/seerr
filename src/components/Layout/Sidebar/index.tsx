@@ -5,6 +5,7 @@ import { Permission, useUser } from '@app/hooks/useUser';
 import defineMessages from '@app/utils/defineMessages';
 import { Transition } from '@headlessui/react';
 import {
+  CheckCircleIcon,
   ClockIcon,
   CogIcon,
   ExclamationTriangleIcon,
@@ -25,6 +26,7 @@ export const menuMessages = defineMessages('components.Layout.Sidebar', {
   dashboard: 'Discover',
   browsemovies: 'Movies',
   browsetv: 'Series',
+  available: 'Available',
   requests: 'Requests',
   blocklist: 'Blocklist',
   issues: 'Issues',
@@ -70,6 +72,12 @@ const SidebarLinks: SidebarLinkProps[] = [
     messagesKey: 'browsetv',
     svgIcon: <TvIcon className="mr-3 h-6 w-6" />,
     activeRegExp: /^\/discover\/tv$/,
+  },
+  {
+    href: '/available',
+    messagesKey: 'available',
+    svgIcon: <CheckCircleIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/available/,
   },
   {
     href: '/requests',
