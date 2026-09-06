@@ -648,6 +648,21 @@ export class MediaRequest {
   @Column({ default: false })
   public ignoreQuota: boolean;
 
+  // Interactive-search grab: when a non-privileged user picks a specific
+  // release, the chosen release is remembered here so that on approval we grab
+  // THAT exact release instead of running a fresh auto-search. Null on normal
+  // requests, which keep the auto-search behavior.
+  @Column({ type: 'varchar', nullable: true })
+  public grabReleaseGuid?: string | null;
+
+  @Column({ type: 'integer', nullable: true })
+  public grabReleaseIndexerId?: number | null;
+
+  // For a per-episode TV grab, the Sonarr internal episode id to grab/monitor.
+  // Null for movies and for season-level grabs.
+  @Column({ type: 'integer', nullable: true })
+  public grabEpisodeId?: number | null;
+
   constructor(init?: Partial<MediaRequest>) {
     Object.assign(this, init);
   }

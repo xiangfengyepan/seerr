@@ -71,12 +71,16 @@ const buildUrl = ({
 };
 
 const EpisodeSearch = ({
+  tmdbId,
   tvdbId,
+  season,
   episodeId,
   serverId,
   onGrab,
 }: {
+  tmdbId?: number;
   tvdbId: number;
+  season: number;
   episodeId: number;
   serverId?: number;
   onGrab?: () => void;
@@ -102,7 +106,9 @@ const EpisodeSearch = ({
         <div className="mt-3">
           <InteractiveSearch
             mediaType="tv"
+            tmdbId={tmdbId}
             tvdbId={tvdbId}
+            season={season}
             episodeId={episodeId}
             serverId={serverId}
             onGrab={onGrab}
@@ -140,6 +146,10 @@ const InteractiveSearch = (props: InteractiveSearchProps) => {
       <ReleaseList
         mediaType={props.mediaType}
         serverId={resolvedServerId}
+        tmdbId={props.tmdbId}
+        tvdbId={props.tvdbId}
+        seasonNumber={props.season}
+        episodeId={props.episodeId}
         results={data?.results}
         isLoading={isLoading}
         error={error}
@@ -171,7 +181,9 @@ const InteractiveSearch = (props: InteractiveSearchProps) => {
                 </div>
                 <div className="mt-2">
                   <EpisodeSearch
+                    tmdbId={props.tmdbId}
                     tvdbId={props.tvdbId as number}
+                    season={episode.seasonNumber}
                     episodeId={episode.id}
                     serverId={resolvedServerId}
                     onGrab={props.onGrab}

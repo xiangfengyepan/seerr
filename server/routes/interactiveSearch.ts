@@ -1,6 +1,16 @@
 import RadarrAPI from '@server/api/servarr/radarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
 import TheMovieDb from '@server/api/themoviedb';
+import { MediaType } from '@server/constants/media';
+import { getRepository } from '@server/datasource';
+import {
+  BlocklistedMediaError,
+  DuplicateMediaRequestError,
+  MediaRequest,
+  NoSeasonsAvailableError,
+  QuotaRestrictedError,
+  RequestPermissionError,
+} from '@server/entity/MediaRequest';
 import type {
   GrabReleaseResponse,
   InteractiveSearchResponse,
@@ -314,6 +324,14 @@ interface GrabReleaseBody {
   serverId?: number;
   guid: string;
   indexerId: number;
+  /** TMDB id of the target title — required to create a request for approval. */
+  tmdbId?: number;
+  /** TVDB id (TV only), passed through to the created request. */
+  tvdbId?: number;
+  /** Season number chosen (TV only). */
+  seasonNumber?: number;
+  /** Sonarr internal episode id for a per-episode grab (TV only). */
+  episodeId?: number;
 }
 
 /**
@@ -352,7 +370,16 @@ interactiveSearchRoutes.post<never, GrabReleaseResponse, GrabReleaseBody>(
   isAuthenticated(Permission.REQUEST),
   async (req, res, next) => {
     try {
-      const { mediaType, serverId, guid, indexerId } = req.body;
+      const {
+        mediaType,
+        serverId,
+        guid,
+        indexerId,
+        tmdbId,
+        tvdbId,
+        seasonNumber,
+        episodeId,
+      } = req.body;
 
       if (!guid || indexerId === undefined || indexerId === null) {
         return next({
@@ -366,15 +393,87 @@ interactiveSearchRoutes.post<never, GrabReleaseResponse, GrabReleaseBody>(
       }
 
       // Enforce the existing approval model. Non-privileged users do not push
-      // the grab directly — this is where a future phase persists the chosen
-      // release on a MediaRequest for an admin to approve.
+      // the grab directly — we create a PENDING MediaRequest that remembers the
+      // exact release chosen, so an admin approval grabs THAT release rather
+      // than running a fresh auto-search.
       if (!canAutoGrab(req.user, mediaType)) {
-        return res.status(202).json({
-          grabbed: false,
-          pendingApproval: true,
-          message:
-            'This grab requires approval and has not been sent to the download client.',
-        });
+        if (!req.user) {
+          return next({ status: 401, message: 'You must be logged in.' });
+        }
+
+        if (tmdbId === undefined || Number.isNaN(Number(tmdbId))) {
+          return next({
+            status: 400,
+            message: 'A tmdbId is required to submit a grab for approval.',
+          });
+        }
+
+        try {
+          const request = await MediaRequest.request(
+            mediaType === 'movie'
+              ? {
+                  mediaType: MediaType.MOVIE,
+                  mediaId: Number(tmdbId),
+                  serverId,
+                  is4k: false,
+                }
+              : {
+                  mediaType: MediaType.TV,
+                  mediaId: Number(tmdbId),
+                  tvdbId: tvdbId !== undefined ? Number(tvdbId) : undefined,
+                  seasons:
+                    seasonNumber !== undefined ? [Number(seasonNumber)] : 'all',
+                  serverId,
+                  is4k: false,
+                },
+            req.user
+          );
+
+          // Persist the chosen release onto the (PENDING) request. Saving again
+          // fires @AfterUpdate but the request is still PENDING, so nothing is
+          // pushed to the download client yet.
+          const requestRepository = getRepository(MediaRequest);
+          request.grabReleaseGuid = guid;
+          request.grabReleaseIndexerId = indexerId;
+          if (
+            mediaType === 'tv' &&
+            episodeId !== undefined &&
+            !Number.isNaN(Number(episodeId))
+          ) {
+            request.grabEpisodeId = Number(episodeId);
+          }
+          await requestRepository.save(request);
+
+          logger.info('Interactive grab saved as pending request', {
+            label: 'Interactive Search',
+            mediaType,
+            requestId: request.id,
+            userId: req.user.id,
+          });
+
+          return res.status(202).json({
+            grabbed: false,
+            pendingApproval: true,
+            message:
+              'This grab requires approval and has been submitted for review.',
+            request,
+          });
+        } catch (e) {
+          if (
+            e instanceof RequestPermissionError ||
+            e instanceof QuotaRestrictedError ||
+            e instanceof BlocklistedMediaError
+          ) {
+            return next({ status: 403, message: e.message });
+          }
+          if (e instanceof DuplicateMediaRequestError) {
+            return next({ status: 409, message: e.message });
+          }
+          if (e instanceof NoSeasonsAvailableError) {
+            return next({ status: 202, message: e.message });
+          }
+          throw e;
+        }
       }
 
       if (mediaType === 'movie') {

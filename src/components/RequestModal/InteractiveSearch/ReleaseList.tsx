@@ -41,6 +41,10 @@ const ANY = '__any__';
 interface ReleaseListProps {
   mediaType: 'movie' | 'tv';
   serverId?: number;
+  tmdbId?: number;
+  tvdbId?: number;
+  seasonNumber?: number;
+  episodeId?: number;
   results?: ParsedRelease[];
   isLoading: boolean;
   error?: unknown;
@@ -122,6 +126,10 @@ const FilterDropdown = ({
 const ReleaseList = ({
   mediaType,
   serverId,
+  tmdbId,
+  tvdbId,
+  seasonNumber,
+  episodeId,
   results,
   isLoading,
   error,
@@ -201,6 +209,10 @@ const ReleaseList = ({
           serverId,
           guid: release.guid,
           indexerId: release.indexerId,
+          tmdbId,
+          tvdbId,
+          seasonNumber,
+          episodeId,
         }
       );
       setGrabbedGuids((prev) => [...prev, release.guid]);

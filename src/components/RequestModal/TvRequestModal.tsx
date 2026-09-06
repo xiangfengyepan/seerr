@@ -754,6 +754,7 @@ const TvRequestModal = ({
                               >
                                 <InteractiveSearch
                                   mediaType="tv"
+                                  tmdbId={tmdbId}
                                   tvdbId={tvdbIdForSearch}
                                   season={season.seasonNumber}
                                   serverId={requestOverrides?.server}

@@ -65,9 +65,17 @@ export interface InteractiveSearchTvResponse extends InteractiveSearchResponse {
   episodes?: ReleaseEpisode[];
 }
 
+import type { MediaRequest } from '@server/entity/MediaRequest';
+
 export interface GrabReleaseResponse {
   grabbed: boolean;
   /** When a non-auto-approve user grabs, we do not push yet. */
   pendingApproval: boolean;
   message: string;
+  /**
+   * The PENDING MediaRequest created for a non-privileged grab, carrying the
+   * chosen release so an admin approval grabs that exact release. Absent when a
+   * privileged user grabbed immediately.
+   */
+  request?: MediaRequest;
 }
