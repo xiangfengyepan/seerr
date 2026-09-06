@@ -227,6 +227,11 @@ app
       OpenApiValidator.middleware({
         apiSpec: API_SPEC_PATH,
         validateRequests: true,
+        // The interactive-search routes (/api/v1/release/*) are custom fork
+        // endpoints not described in the OpenAPI spec; without this the
+        // validator rejects them as undocumented paths with a 404. Skip
+        // OpenAPI validation for that prefix so they reach their handlers.
+        ignorePaths: /\/api\/v1\/release(\/|$)/,
       })
     );
     /**
