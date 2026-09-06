@@ -64,10 +64,164 @@ export interface RadarrMovie {
   };
 }
 
+export interface RadarrRelease {
+  guid: string;
+  quality: {
+    quality: {
+      id: number;
+      name: string;
+      source?: string;
+      resolution?: number;
+      modifier?: string;
+    };
+    revision?: {
+      version: number;
+      real: number;
+      isRepack: boolean;
+    };
+  };
+  qualityWeight?: number;
+  age?: number;
+  ageHours?: number;
+  ageMinutes?: number;
+  size: number;
+  indexerId: number;
+  indexer: string;
+  releaseGroup?: string;
+  subGroup?: string;
+  title: string;
+  sceneSource?: boolean;
+  movieTitles?: string[];
+  languages?: { id: number; name: string }[];
+  mappedMovieId?: number;
+  approved: boolean;
+  temporarilyRejected?: boolean;
+  rejected: boolean;
+  rejections?: string[];
+  publishDate?: string;
+  downloadUrl?: string;
+  infoUrl?: string;
+  downloadAllowed?: boolean;
+  releaseWeight?: number;
+  customFormatScore?: number;
+  seeders?: number;
+  leechers?: number;
+  protocol?: string;
+}
+
+export interface RadarrReleaseGrabResponse {
+  guid: string;
+  [key: string]: unknown;
+}
+
 class RadarrAPI extends ServarrBase<{ movieId: number }> {
   constructor({ url, apiKey }: { url: string; apiKey: string }) {
     super({ url, apiKey, cacheName: 'radarr', apiName: 'Radarr' });
   }
+
+  /**
+   * Interactive search: fetch the actual releases the indexers return for a
+   * given Radarr movie. The movie must already exist in Radarr.
+   */
+  public getReleases = async (movieId: number): Promise<RadarrRelease[]> => {
+    try {
+      const response = await this.axios.get<RadarrRelease[]>('/release', {
+        params: { movieId },
+      });
+
+      return response.data;
+    } catch (e) {
+      throw new Error(`[Radarr] Failed to retrieve releases: ${e.message}`, {
+        cause: e,
+      });
+    }
+  };
+
+  /**
+   * Ensure a movie exists in Radarr so an interactive release search can run
+   * against it. If the movie is not yet in the library it is added UNMONITORED
+   * with no automatic search, on the supplied (permissive) quality profile.
+   * Returns the Radarr movie record (with its internal id).
+   */
+  public ensureMovie = async (options: {
+    tmdbId: number;
+    title: string;
+    year: number;
+    qualityProfileId: number;
+    rootFolderPath: string;
+    minimumAvailability: string;
+  }): Promise<RadarrMovie> => {
+    const lookup = await this.getMovieByTmdbId(options.tmdbId);
+
+    // Already in the Radarr library.
+    if (lookup.id) {
+      return lookup;
+    }
+
+    try {
+      const response = await this.axios.post<RadarrMovie>('/movie', {
+        title: options.title,
+        qualityProfileId: options.qualityProfileId,
+        profileId: options.qualityProfileId,
+        titleSlug: options.tmdbId.toString(),
+        minimumAvailability: options.minimumAvailability,
+        tmdbId: options.tmdbId,
+        year: options.year,
+        rootFolderPath: options.rootFolderPath,
+        monitored: false,
+        tags: [],
+        addOptions: {
+          searchForMovie: false,
+        },
+      });
+
+      if (!response.data.id) {
+        throw new Error('Radarr did not return a movie id');
+      }
+
+      logger.info(
+        'Added movie to Radarr (unmonitored) for interactive search',
+        {
+          label: 'Radarr',
+          movieId: response.data.id,
+          tmdbId: options.tmdbId,
+        }
+      );
+
+      return response.data;
+    } catch (e) {
+      throw new Error(
+        `[Radarr] Failed to add movie for interactive search: ${e.message}`,
+        { cause: e }
+      );
+    }
+  };
+
+  /**
+   * Interactive grab: tell Radarr to download a specific release the user
+   * picked. Radarr accepts the release regardless of quality profile when the
+   * movie sits on a permissive ("Any") profile.
+   */
+  public grabRelease = async ({
+    guid,
+    indexerId,
+  }: {
+    guid: string;
+    indexerId: number;
+  }): Promise<RadarrReleaseGrabResponse> => {
+    try {
+      const response = await this.axios.post<RadarrReleaseGrabResponse>(
+        '/release',
+        { guid, indexerId }
+      );
+
+      return response.data;
+    } catch (e) {
+      throw new Error(`[Radarr] Failed to grab release: ${e.message}`, {
+        cause: e,
+      });
+    }
+  };
 
   public getMovies = async (): Promise<RadarrMovie[]> => {
     try {

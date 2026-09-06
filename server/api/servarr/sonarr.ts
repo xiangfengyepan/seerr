@@ -109,6 +109,56 @@ export interface LanguageProfile {
   name: string;
 }
 
+export interface SonarrRelease {
+  guid: string;
+  quality: {
+    quality: {
+      id: number;
+      name: string;
+      source?: string;
+      resolution?: number;
+    };
+    revision?: {
+      version: number;
+      real: number;
+      isRepack: boolean;
+    };
+  };
+  qualityWeight?: number;
+  age?: number;
+  ageHours?: number;
+  ageMinutes?: number;
+  size: number;
+  indexerId: number;
+  indexer: string;
+  releaseGroup?: string;
+  subGroup?: string;
+  title: string;
+  fullSeason?: boolean;
+  sceneSource?: boolean;
+  seasonNumber?: number;
+  episodeNumbers?: number[];
+  languages?: { id: number; name: string }[];
+  approved: boolean;
+  temporarilyRejected?: boolean;
+  rejected: boolean;
+  rejections?: string[];
+  publishDate?: string;
+  downloadUrl?: string;
+  infoUrl?: string;
+  downloadAllowed?: boolean;
+  releaseWeight?: number;
+  customFormatScore?: number;
+  seeders?: number;
+  leechers?: number;
+  protocol?: string;
+}
+
+export interface SonarrReleaseGrabResponse {
+  guid: string;
+  [key: string]: unknown;
+}
+
 class SonarrAPI extends ServarrBase<{
   seriesId: number;
   episodeId: number;
@@ -117,6 +167,141 @@ class SonarrAPI extends ServarrBase<{
   constructor({ url, apiKey }: { url: string; apiKey: string }) {
     super({ url, apiKey, apiName: 'Sonarr', cacheName: 'sonarr' });
   }
+
+  /**
+   * Interactive search for a whole season. The series must already exist in
+   * Sonarr.
+   */
+  public getReleasesBySeason = async ({
+    seriesId,
+    seasonNumber,
+  }: {
+    seriesId: number;
+    seasonNumber: number;
+  }): Promise<SonarrRelease[]> => {
+    try {
+      const response = await this.axios.get<SonarrRelease[]>('/release', {
+        params: { seriesId, seasonNumber },
+      });
+
+      return response.data;
+    } catch (e) {
+      throw new Error(
+        `[Sonarr] Failed to retrieve season releases: ${e.message}`,
+        { cause: e }
+      );
+    }
+  };
+
+  /**
+   * Interactive search for a single episode (by Sonarr episode id).
+   */
+  public getReleasesByEpisode = async (
+    episodeId: number
+  ): Promise<SonarrRelease[]> => {
+    try {
+      const response = await this.axios.get<SonarrRelease[]>('/release', {
+        params: { episodeId },
+      });
+
+      return response.data;
+    } catch (e) {
+      throw new Error(
+        `[Sonarr] Failed to retrieve episode releases: ${e.message}`,
+        { cause: e }
+      );
+    }
+  };
+
+  /**
+   * Ensure a series exists in Sonarr so an interactive release search can run
+   * against it. If the series is not yet in the library it is added
+   * UNMONITORED (all seasons unmonitored, no automatic search) on the supplied
+   * (permissive) quality profile. Returns the Sonarr series record.
+   */
+  public async ensureSeries(options: {
+    tvdbId: number;
+    title?: string;
+    qualityProfileId: number;
+    languageProfileId?: number;
+    rootFolderPath: string;
+    seasonFolder: boolean;
+    seriesType: SonarrSeries['seriesType'];
+  }): Promise<SonarrSeries> {
+    const lookup = await this.getSeriesByTvdbId(options.tvdbId);
+
+    // Already in the Sonarr library.
+    if (lookup.id) {
+      return lookup;
+    }
+
+    try {
+      const response = await this.axios.post<SonarrSeries>('/series', {
+        tvdbId: options.tvdbId,
+        title: options.title ?? lookup.title,
+        qualityProfileId: options.qualityProfileId,
+        languageProfileId: options.languageProfileId,
+        seasons: (lookup.seasons ?? []).map((season) => ({
+          seasonNumber: season.seasonNumber,
+          monitored: false,
+        })),
+        seasonFolder: options.seasonFolder,
+        monitored: false,
+        monitorNewItems: 'none',
+        rootFolderPath: options.rootFolderPath,
+        seriesType: options.seriesType,
+        addOptions: {
+          ignoreEpisodesWithFiles: false,
+          searchForMissingEpisodes: false,
+        },
+      } as Partial<SonarrSeries>);
+
+      if (!response.data.id) {
+        throw new Error('Sonarr did not return a series id');
+      }
+
+      logger.info(
+        'Added series to Sonarr (unmonitored) for interactive search',
+        {
+          label: 'Sonarr',
+          seriesId: response.data.id,
+          tvdbId: options.tvdbId,
+        }
+      );
+
+      return response.data;
+    } catch (e) {
+      throw new Error(
+        `[Sonarr] Failed to add series for interactive search: ${e.message}`,
+        { cause: e }
+      );
+    }
+  }
+
+  /**
+   * Interactive grab: tell Sonarr to download a specific release the user
+   * picked.
+   */
+  public grabRelease = async ({
+    guid,
+    indexerId,
+  }: {
+    guid: string;
+    indexerId: number;
+  }): Promise<SonarrReleaseGrabResponse> => {
+    try {
+      const response = await this.axios.post<SonarrReleaseGrabResponse>(
+        '/release',
+        { guid, indexerId }
+      );
+
+      return response.data;
+    } catch (e) {
+      throw new Error(`[Sonarr] Failed to grab release: ${e.message}`, {
+        cause: e,
+      });
+    }
+  };
 
   public async getSeries(): Promise<SonarrSeries[]> {
     try {
