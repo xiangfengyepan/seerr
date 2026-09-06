@@ -30,6 +30,26 @@ import type {
 } from 'typeorm';
 import { EventSubscriber, Not } from 'typeorm';
 
+/**
+ * Pick a permissive quality profile so the exact release a user chose in the
+ * interactive search is accepted on import. Prefers a profile literally named
+ * "Any", then the configured active profile, then the *arr default of id 1.
+ * Mirrors resolvePermissiveProfileId in routes/interactiveSearch.ts.
+ */
+const resolvePermissiveProfileId = (
+  profiles: { id: number; name: string }[],
+  fallbackId: number
+): number => {
+  const anyProfile = profiles.find((p) => p.name.toLowerCase() === 'any');
+  if (anyProfile) {
+    return anyProfile.id;
+  }
+  if (fallbackId) {
+    return fallbackId;
+  }
+  return profiles[0]?.id ?? 1;
+};
+
 const sanitizeDisplayName = (displayName: string): string => {
   return displayName
     .normalize('NFD')
@@ -180,11 +200,347 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
     }
   }
 
+  /**
+   * Mark a request FAILED (idempotently) and fire a failure notification.
+   * Used by the interactive-grab paths when a chosen release cannot be grabbed.
+   */
+  private async markRequestFailed(entity: MediaRequest): Promise<void> {
+    const requestRepository = getRepository(MediaRequest);
+    const mediaRepository = getRepository(Media);
+    try {
+      const media = await mediaRepository.findOne({
+        where: { id: entity.media.id },
+      });
+      if (entity.status !== MediaRequestStatus.FAILED) {
+        entity.status = MediaRequestStatus.FAILED;
+        await requestRepository.save(entity);
+      }
+      if (media) {
+        MediaRequest.sendNotification(entity, media, Notification.MEDIA_FAILED);
+      }
+    } catch (saveError) {
+      logger.error('Failed to mark request as FAILED after grab error', {
+        label: 'Media Request',
+        requestId: entity.id,
+        errorMessage:
+          saveError instanceof Error ? saveError.message : String(saveError),
+      });
+    }
+  }
+
+  /**
+   * Approval grab for a MOVIE: the user picked a specific release during the
+   * interactive search. Ensure the movie is in Radarr and monitored on a
+   * permissive profile WITHOUT triggering an auto-search, then grab that exact
+   * release.
+   */
+  private async grabRadarrRelease(entity: MediaRequest): Promise<void> {
+    const mediaRepository = getRepository(Media);
+    const settings = getSettings();
+
+    try {
+      if (settings.radarr.length === 0 && !settings.radarr[0]) {
+        logger.info(
+          'No Radarr server configured, skipping interactive grab',
+          {
+            label: 'Media Request',
+            requestId: entity.id,
+            mediaId: entity.media.id,
+          }
+        );
+        return;
+      }
+
+      let radarrSettings = settings.radarr.find(
+        (radarr) => radarr.isDefault && radarr.is4k === entity.is4k
+      );
+
+      if (
+        entity.serverId !== null &&
+        entity.serverId >= 0 &&
+        radarrSettings?.id !== entity.serverId
+      ) {
+        radarrSettings = settings.radarr.find(
+          (radarr) => radarr.id === entity.serverId
+        );
+      }
+
+      if (!radarrSettings) {
+        logger.warn('No Radarr server available for interactive grab', {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+        });
+        return;
+      }
+
+      const media = await mediaRepository.findOne({
+        where: { id: entity.media.id },
+      });
+      if (!media) {
+        logger.error('Media data not found', {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+        });
+        return;
+      }
+
+      const tmdb = new TheMovieDb();
+      const movie = await tmdb.getMovie({ movieId: entity.media.tmdbId });
+
+      const radarr = new RadarrAPI({
+        apiKey: radarrSettings.apiKey,
+        url: RadarrAPI.buildUrl(radarrSettings, '/api/v3'),
+      });
+
+      const profiles = await radarr.getProfiles();
+      const profileId = resolvePermissiveProfileId(
+        profiles,
+        radarrSettings.activeProfileId
+      );
+
+      const rootFolder =
+        entity.rootFolder && entity.rootFolder !== ''
+          ? entity.rootFolder
+          : radarrSettings.activeDirectory;
+
+      const radarrMovieOptions: RadarrMovieOptions = {
+        profileId,
+        qualityProfileId: profileId,
+        rootFolderPath: rootFolder,
+        minimumAvailability: radarrSettings.minimumAvailability,
+        title: movie.title,
+        tmdbId: movie.id,
+        year: movie.release_date ? Number(movie.release_date.slice(0, 4)) : 0,
+        monitored: true,
+        tags: radarrSettings.tags ? [...radarrSettings.tags] : [],
+        searchNow: false,
+      };
+
+      await radarr.addMovie(radarrMovieOptions);
+
+      await radarr.grabRelease({
+        guid: entity.grabReleaseGuid as string,
+        indexerId: entity.grabReleaseIndexerId as number,
+      });
+
+      const radarrMovie = await radarr.getMovieByTmdbId(movie.id);
+      if (radarrMovie.id) {
+        media.externalServiceId = radarrMovie.id;
+        media.externalServiceSlug = radarrMovie.titleSlug;
+        media.serviceId = radarrSettings.id;
+        await mediaRepository.save(media);
+      }
+
+      logger.info('Grabbed chosen release via Radarr on approval', {
+        label: 'Media Request',
+        requestId: entity.id,
+        mediaId: entity.media.id,
+        indexerId: entity.grabReleaseIndexerId,
+      });
+    } catch (e) {
+      logger.warn(
+        'Failed to grab chosen release via Radarr, marking request as FAILED',
+        {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+          errorMessage: e instanceof Error ? e.message : String(e),
+        }
+      );
+      await this.markRequestFailed(entity);
+    }
+  }
+
+  /**
+   * Approval grab for TV: the user picked a specific release during the
+   * interactive search. Ensure the series exists in Sonarr on a permissive
+   * profile and monitor the target (the whole requested season, or a single
+   * episode for a per-episode grab) WITHOUT triggering an auto-search, then grab
+   * that exact release.
+   */
+  private async grabSonarrRelease(entity: MediaRequest): Promise<void> {
+    const mediaRepository = getRepository(Media);
+    const settings = getSettings();
+
+    try {
+      if (settings.sonarr.length === 0 && !settings.sonarr[0]) {
+        logger.warn(
+          'No Sonarr server configured, skipping interactive grab',
+          {
+            label: 'Media Request',
+            requestId: entity.id,
+            mediaId: entity.media.id,
+          }
+        );
+        return;
+      }
+
+      let sonarrSettings = settings.sonarr.find(
+        (sonarr) => sonarr.isDefault && sonarr.is4k === entity.is4k
+      );
+
+      if (
+        entity.serverId !== null &&
+        entity.serverId >= 0 &&
+        sonarrSettings?.id !== entity.serverId
+      ) {
+        sonarrSettings = settings.sonarr.find(
+          (sonarr) => sonarr.id === entity.serverId
+        );
+      }
+
+      if (!sonarrSettings) {
+        logger.warn('No Sonarr server available for interactive grab', {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+        });
+        return;
+      }
+
+      const media = await mediaRepository.findOne({
+        where: { id: entity.media.id },
+      });
+      if (!media) {
+        logger.error('Media data not found', {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+        });
+        return;
+      }
+
+      const tmdb = new TheMovieDb();
+      const series = await tmdb.getTvShow({ tvId: media.tmdbId });
+      const tvdbId = series.external_ids.tvdb_id ?? media.tvdbId;
+
+      if (!tvdbId) {
+        throw new Error('TVDB ID not found');
+      }
+
+      let seriesType: SonarrSeries['seriesType'] = 'standard';
+      if (
+        series.keywords.results.some(
+          (keyword) => keyword.id === ANIME_KEYWORD_ID
+        )
+      ) {
+        seriesType = sonarrSettings.animeSeriesType ?? 'anime';
+      }
+
+      const rootFolder =
+        entity.rootFolder && entity.rootFolder !== ''
+          ? entity.rootFolder
+          : seriesType === 'anime' && sonarrSettings.activeAnimeDirectory
+            ? sonarrSettings.activeAnimeDirectory
+            : sonarrSettings.activeDirectory;
+
+      const sonarr = new SonarrAPI({
+        apiKey: sonarrSettings.apiKey,
+        url: SonarrAPI.buildUrl(sonarrSettings, '/api/v3'),
+      });
+
+      const profiles = await sonarr.getProfiles();
+      const profileId = resolvePermissiveProfileId(
+        profiles,
+        sonarrSettings.activeProfileId
+      );
+      const languageProfile =
+        seriesType === 'anime' && sonarrSettings.activeAnimeLanguageProfileId
+          ? sonarrSettings.activeAnimeLanguageProfileId
+          : sonarrSettings.activeLanguageProfileId;
+
+      const requestedSeasons = entity.seasons.map(
+        (season) => season.seasonNumber
+      );
+
+      let sonarrSeries: SonarrSeries;
+
+      if (
+        entity.grabEpisodeId !== null &&
+        entity.grabEpisodeId !== undefined
+      ) {
+        // Per-episode grab: ensure the series exists, then monitor ONLY the
+        // chosen episode (no season-wide monitoring, no auto-search).
+        sonarrSeries = await sonarr.ensureSeries({
+          tvdbId,
+          title: series.name,
+          qualityProfileId: profileId,
+          languageProfileId: languageProfile,
+          rootFolderPath: rootFolder,
+          seasonFolder: sonarrSettings.enableSeasonFolders,
+          seriesType,
+        });
+        await sonarr.monitorEpisodes([entity.grabEpisodeId]);
+      } else {
+        // Season-level grab: ensure the series exists and monitor the requested
+        // season(s) WITHOUT auto-search (reuses the standard season handling).
+        sonarrSeries = await sonarr.addSeries({
+          profileId,
+          languageProfileId: languageProfile,
+          rootFolderPath: rootFolder,
+          title: series.name,
+          tvdbid: tvdbId,
+          seasons: requestedSeasons,
+          seasonFolder: sonarrSettings.enableSeasonFolders,
+          seriesType,
+          tags: sonarrSettings.tags ? [...sonarrSettings.tags] : [],
+          monitored: true,
+          monitorNewItems: sonarrSettings.monitorNewItems,
+          searchNow: false,
+        });
+      }
+
+      await sonarr.grabRelease({
+        guid: entity.grabReleaseGuid as string,
+        indexerId: entity.grabReleaseIndexerId as number,
+      });
+
+      if (sonarrSeries.id) {
+        media.externalServiceId = sonarrSeries.id;
+        media.externalServiceSlug = sonarrSeries.titleSlug;
+        media.serviceId = sonarrSettings.id;
+        await mediaRepository.save(media);
+      }
+
+      logger.info('Grabbed chosen release via Sonarr on approval', {
+        label: 'Media Request',
+        requestId: entity.id,
+        mediaId: entity.media.id,
+        indexerId: entity.grabReleaseIndexerId,
+        episodeId: entity.grabEpisodeId ?? undefined,
+      });
+    } catch (e) {
+      logger.warn(
+        'Failed to grab chosen release via Sonarr, marking request as FAILED',
+        {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
+          errorMessage: e instanceof Error ? e.message : String(e),
+        }
+      );
+      await this.markRequestFailed(entity);
+    }
+  }
+
   public async sendToRadarr(entity: MediaRequest): Promise<void> {
     if (
       entity.status === MediaRequestStatus.APPROVED &&
       entity.type === MediaType.MOVIE
     ) {
+      // Interactive-search approval: the user picked a specific release, so grab
+      // THAT release instead of running Radarr's auto-search.
+      if (
+        entity.grabReleaseGuid &&
+        entity.grabReleaseIndexerId !== null &&
+        entity.grabReleaseIndexerId !== undefined
+      ) {
+        await this.grabRadarrRelease(entity);
+        return;
+      }
+
       try {
         const mediaRepository = getRepository(Media);
         const settings = getSettings();
@@ -479,6 +835,17 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       entity.status === MediaRequestStatus.APPROVED &&
       entity.type === MediaType.TV
     ) {
+      // Interactive-search approval: the user picked a specific release, so grab
+      // THAT release instead of running Sonarr's auto-search.
+      if (
+        entity.grabReleaseGuid &&
+        entity.grabReleaseIndexerId !== null &&
+        entity.grabReleaseIndexerId !== undefined
+      ) {
+        await this.grabSonarrRelease(entity);
+        return;
+      }
+
       try {
         const mediaRepository = getRepository(Media);
         const settings = getSettings();

@@ -1,12 +1,15 @@
 import Alert from '@app/components/Common/Alert';
+import Button from '@app/components/Common/Button';
 import Modal from '@app/components/Common/Modal';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
 import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
+import InteractiveSearch from '@app/components/RequestModal/InteractiveSearch';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
+import { MagnifyingGlassIcon } from '@heroicons/react/24/solid';
 import { MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
@@ -35,6 +38,8 @@ const messages = defineMessages('components.RequestModal', {
   requestApproved: 'Request for <strong>{title}</strong> approved!',
   requesterror: 'Something went wrong while submitting the request.',
   pendingapproval: 'Your request is pending approval.',
+  interactivesearch: 'Interactive Search',
+  hideinteractivesearch: 'Hide Interactive Search',
 });
 
 interface RequestModalProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -55,6 +60,7 @@ const MovieRequestModal = ({
   is4k = false,
 }: RequestModalProps) => {
   const [isUpdating, setIsUpdating] = useState(false);
+  const [showInteractiveSearch, setShowInteractiveSearch] = useState(false);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
   const { addToast } = useToasts();
@@ -369,6 +375,30 @@ const MovieRequestModal = ({
           }}
         />
       )}
+      <div className="mt-6 border-t border-gray-700 pt-4">
+        <Button
+          buttonType="ghost"
+          onClick={() => setShowInteractiveSearch((prev) => !prev)}
+        >
+          <MagnifyingGlassIcon />
+          <span>
+            {intl.formatMessage(
+              showInteractiveSearch
+                ? messages.hideinteractivesearch
+                : messages.interactivesearch
+            )}
+          </span>
+        </Button>
+        {showInteractiveSearch && data && (
+          <div className="mt-4">
+            <InteractiveSearch
+              mediaType="movie"
+              tmdbId={data.id}
+              serverId={requestOverrides?.server}
+            />
+          </div>
+        )}
+      </div>
     </Modal>
   );
 };
