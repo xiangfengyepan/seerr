@@ -182,6 +182,9 @@ class SonarrAPI extends ServarrBase<{
     try {
       const response = await this.axios.get<SonarrRelease[]>('/release', {
         params: { seriesId, seasonNumber },
+        // Interactive indexer searches routinely take far longer than the
+        // global Servarr apiRequestTimeout (~10s); allow up to 90s here.
+        timeout: 90000,
       });
 
       return response.data;
@@ -202,6 +205,9 @@ class SonarrAPI extends ServarrBase<{
     try {
       const response = await this.axios.get<SonarrRelease[]>('/release', {
         params: { episodeId },
+        // Interactive indexer searches routinely take far longer than the
+        // global Servarr apiRequestTimeout (~10s); allow up to 90s here.
+        timeout: 90000,
       });
 
       return response.data;

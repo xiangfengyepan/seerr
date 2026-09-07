@@ -127,6 +127,9 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
     try {
       const response = await this.axios.get<RadarrRelease[]>('/release', {
         params: { movieId },
+        // Interactive indexer searches routinely take far longer than the
+        // global Servarr apiRequestTimeout (~10s); allow up to 90s here.
+        timeout: 90000,
       });
 
       return response.data;
