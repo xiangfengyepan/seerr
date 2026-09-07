@@ -1,5 +1,9 @@
 import Button from '@app/components/Common/Button';
 import ReleaseList, {
+  computeFilterOptions,
+  emptyReleaseFilters,
+  FilterBar,
+  type ReleaseFilters,
   type SelectedRelease,
 } from '@app/components/RequestModal/InteractiveSearch/ReleaseList';
 import globalMessages from '@app/i18n/globalMessages';
@@ -9,7 +13,7 @@ import type {
   InteractiveSearchResponse,
   InteractiveSearchTvResponse,
 } from '@server/interfaces/api/interactiveSearchInterfaces';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
@@ -28,8 +32,15 @@ interface InteractiveSearchProps {
   season?: number;
   episodeId?: number;
   serverId?: number;
-  selectedGuid?: string | null;
+  selectedGuids?: string[];
   onSelect?: (release: SelectedRelease | null) => void;
+  /**
+   * When provided, this instance is CONTROLLED by a parent (a per-episode
+   * search): it uses these shared filter values and renders no filter bar of
+   * its own. When omitted, the instance owns the filters and renders the single
+   * shared bar for the whole season.
+   */
+  filters?: ReleaseFilters;
 }
 
 const buildUrl = ({
@@ -79,16 +90,18 @@ const EpisodeSearch = ({
   season,
   episodeId,
   serverId,
-  selectedGuid,
+  selectedGuids,
   onSelect,
+  filters,
 }: {
   tmdbId?: number;
   tvdbId: number;
   season: number;
   episodeId: number;
   serverId?: number;
-  selectedGuid?: string | null;
+  selectedGuids?: string[];
   onSelect?: (release: SelectedRelease | null) => void;
+  filters: ReleaseFilters;
 }) => {
   const intl = useIntl();
   const [expanded, setExpanded] = useState(false);
@@ -116,8 +129,9 @@ const EpisodeSearch = ({
             season={season}
             episodeId={episodeId}
             serverId={serverId}
-            selectedGuid={selectedGuid}
+            selectedGuids={selectedGuids}
             onSelect={onSelect}
+            filters={filters}
           />
         </div>
       )}
@@ -142,8 +156,25 @@ const InteractiveSearch = (props: InteractiveSearchProps) => {
   const resolvedServerId = data?.serverId ?? props.serverId;
   const episodes = data && 'episodes' in data ? (data.episodes ?? []) : [];
 
+  // A per-episode search is CONTROLLED by its parent's filters. A top-level
+  // search (movie, or a whole season) owns the filters and renders the single
+  // shared bar; its choice applies to the season list AND every episode list.
+  const controlled = props.filters !== undefined;
+  const [ownFilters, setOwnFilters] =
+    useState<ReleaseFilters>(emptyReleaseFilters);
+  const filters = props.filters ?? ownFilters;
+
+  // Filter options come from this (top) level's results, i.e. the season list.
+  const options = useMemo(
+    () => computeFilterOptions(data?.results),
+    [data?.results]
+  );
+
   return (
     <div className="space-y-4">
+      {!controlled && (data?.results.length ?? 0) > 0 && (
+        <FilterBar filters={filters} options={options} onChange={setOwnFilters} />
+      )}
       {isSeason && (episodes.length > 0 || (data?.results.length ?? 0) > 0) && (
         <h4 className="text-sm font-semibold uppercase tracking-wider text-gray-400">
           {intl.formatMessage(messages.seasonreleases)}
@@ -159,7 +190,8 @@ const InteractiveSearch = (props: InteractiveSearchProps) => {
         results={data?.results}
         isLoading={isLoading}
         error={error}
-        selectedGuid={props.selectedGuid}
+        filters={filters}
+        selectedGuids={props.selectedGuids}
         onSelect={props.onSelect}
       />
 
@@ -193,8 +225,9 @@ const InteractiveSearch = (props: InteractiveSearchProps) => {
                     season={episode.seasonNumber}
                     episodeId={episode.id}
                     serverId={resolvedServerId}
-                    selectedGuid={props.selectedGuid}
+                    selectedGuids={props.selectedGuids}
                     onSelect={props.onSelect}
+                    filters={filters}
                   />
                 </div>
               </li>

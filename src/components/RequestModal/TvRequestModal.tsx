@@ -85,12 +85,13 @@ const TvRequestModal = ({
   const { data, error } = useSWR<TvDetails>(`/api/v1/tv/${tmdbId}`);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
-  const [selectedSeasons, setSelectedSeasons] = useState<number[]>(
-    editRequest ? editingSeasons : []
-  );
   const [expandedSeason, setExpandedSeason] = useState<number | null>(null);
-  const [selectedRelease, setSelectedRelease] =
-    useState<SelectedRelease | null>(null);
+  // Interactive search picks: at most one release per episode (keyed by
+  // episodeId) plus optionally one whole-season pack (keyed by season, no
+  // episodeId). Uniqueness is enforced in handleSelectRelease below.
+  const [selectedReleases, setSelectedReleases] = useState<SelectedRelease[]>(
+    []
+  );
   const intl = useIntl();
   const { user, hasPermission } = useUser();
   const [searchModal, setSearchModal] = useState<{
@@ -106,10 +107,25 @@ const TvRequestModal = ({
       : null
   );
 
-  const currentlyRemaining =
-    (quota?.tv.remaining ?? 0) -
-    selectedSeasons.length +
-    (editRequest?.seasons ?? []).length;
+  // Enforce the "at most one pick per episode, at most one whole-season pack"
+  // rule and toggle-off behavior, all in the parent so the release list stays
+  // dumb. Re-selecting the exact same release removes it; a new pick for an
+  // episode/season-pack replaces any existing pick for that same key.
+  const handleSelectRelease = (release: SelectedRelease | null): void => {
+    if (!release) {
+      return;
+    }
+    setSelectedReleases((prev) => {
+      if (prev.some((pick) => pick.guid === release.guid)) {
+        return prev.filter((pick) => pick.guid !== release.guid);
+      }
+      const isSameKey = (pick: SelectedRelease): boolean =>
+        release.episodeId !== undefined
+          ? pick.episodeId === release.episodeId
+          : pick.episodeId === undefined && pick.season === release.season;
+      return [...prev.filter((pick) => !isSameKey(pick)), release];
+    });
+  };
 
   const updateRequest = async (alsoApproveRequest = false) => {
     if (!editRequest) {
@@ -122,7 +138,7 @@ const TvRequestModal = ({
     }
 
     try {
-      if (selectedSeasons.length > 0) {
+      if (editingSeasons.length > 0) {
         await axios.put(`/api/v1/request/${editRequest.id}`, {
           mediaType: 'tv',
           serverId: requestOverrides?.server,
@@ -131,7 +147,7 @@ const TvRequestModal = ({
           languageProfileId: requestOverrides?.language,
           userId: requestOverrides?.user?.id,
           tags: requestOverrides?.tags,
-          seasons: selectedSeasons.sort((a, b) => a - b),
+          seasons: [...editingSeasons].sort((a, b) => a - b),
         });
 
         if (alsoApproveRequest) {
@@ -145,7 +161,7 @@ const TvRequestModal = ({
 
       addToast(
         <span>
-          {selectedSeasons.length > 0
+          {editingSeasons.length > 0
             ? intl.formatMessage(
                 alsoApproveRequest
                   ? messages.requestApproved
@@ -181,13 +197,6 @@ const TvRequestModal = ({
   };
 
   const sendRequest = async () => {
-    if (
-      settings.currentSettings.partialRequestsEnabled &&
-      selectedSeasons.length === 0
-    ) {
-      return;
-    }
-
     if (onUpdating) {
       onUpdating(true);
       mutate('/api/v1/request/count');
@@ -211,20 +220,22 @@ const TvRequestModal = ({
         mediaType: 'tv',
         is4k,
         ignoreQuota: requestOverrides?.ignoreQuota,
-        seasons: settings.currentSettings.partialRequestsEnabled
-          ? selectedSeasons.sort((a, b) => a - b)
-          : getAllSeasons().filter(
-              (season) => !getAllRequestedSeasons().includes(season)
-            ),
-        // Interactive search: carry the chosen release (season- or episode-
-        // specific) so it is grabbed on approval instead of a fresh auto-search.
-        ...(selectedRelease
+        // Seasons come from the interactive-search picks; with no picks we fall
+        // back to requesting the whole show (all unrequested seasons) so a plain
+        // Request still works as before.
+        seasons: [...requestSeasons].sort((a, b) => a - b),
+        // Interactive search: carry every chosen release (one per episode, plus
+        // an optional whole-season pack) so each is grabbed on approval instead
+        // of a fresh auto-search. Omitted entirely when nothing was picked.
+        ...(selectedReleases.length > 0
           ? {
-              grabReleaseGuid: selectedRelease.guid,
-              grabReleaseIndexerId: selectedRelease.indexerId,
-              ...(selectedRelease.episodeId !== undefined
-                ? { grabEpisodeId: selectedRelease.episodeId }
-                : {}),
+              grabReleases: selectedReleases.map((release) => ({
+                guid: release.guid,
+                indexerId: release.indexerId,
+                ...(release.episodeId !== undefined
+                  ? { episodeId: release.episodeId }
+                  : {}),
+              })),
             }
           : {}),
         ...overrideParams,
@@ -298,68 +309,30 @@ const TvRequestModal = ({
     return [...requestedSeasons, ...availableSeasons];
   };
 
-  const isSelectedSeason = (seasonNumber: number): boolean =>
-    selectedSeasons.includes(seasonNumber);
-
-  const toggleSeason = (seasonNumber: number): void => {
-    // If this season already has a pending request, don't allow it to be toggled
-    if (getAllRequestedSeasons().includes(seasonNumber)) {
-      return;
-    }
-
-    // If there are no more remaining requests available, block toggle
-    if (
-      quota?.tv.limit &&
-      currentlyRemaining <= 0 &&
-      !isSelectedSeason(seasonNumber)
-    ) {
-      return;
-    }
-
-    if (selectedSeasons.includes(seasonNumber)) {
-      setSelectedSeasons((seasons) =>
-        seasons.filter((sn) => sn !== seasonNumber)
-      );
-    } else {
-      setSelectedSeasons((seasons) => [...seasons, seasonNumber]);
-    }
-  };
-
   const unrequestedSeasons = getAllSeasons().filter(
     (season) => !getAllRequestedSeasons().includes(season)
   );
 
-  const toggleAllSeasons = (): void => {
-    // If the user has a quota and not enough requests for all seasons, block toggleAllSeasons
-    if (
-      quota?.tv.limit &&
-      (quota?.tv.remaining ?? 0) < unrequestedSeasons.length
-    ) {
-      return;
-    }
+  // Seasons touched by the interactive-search picks (episode picks and
+  // whole-season packs both carry their season). This is what the request must
+  // cover so the backend monitors the right seasons.
+  const seasonsFromPicks = Array.from(
+    new Set(
+      selectedReleases
+        .map((release) => release.season)
+        .filter((season): season is number => season !== undefined)
+    )
+  );
 
-    if (
-      data &&
-      selectedSeasons.length >= 0 &&
-      selectedSeasons.length < unrequestedSeasons.length
-    ) {
-      setSelectedSeasons(unrequestedSeasons);
-    } else {
-      setSelectedSeasons([]);
-    }
-  };
+  // With picks, request exactly the seasons they touch; with none, fall back to
+  // requesting the whole show (all unrequested seasons).
+  const requestSeasons =
+    seasonsFromPicks.length > 0 ? seasonsFromPicks : unrequestedSeasons;
 
-  const isAllSeasons = (): boolean => {
-    if (!data) {
-      return false;
-    }
-    return (
-      selectedSeasons.filter((season) => season !== 0).length ===
-      getAllSeasons().filter(
-        (season) => !getAllRequestedSeasons().includes(season) && season !== 0
-      ).length
-    );
-  };
+  const currentlyRemaining =
+    (quota?.tv.remaining ?? 0) -
+    requestSeasons.length +
+    (editRequest?.seasons ?? []).length;
 
   const getSeasonRequest = (
     seasonNumber: number
@@ -435,42 +408,36 @@ const TvRequestModal = ({
       subTitle={data?.name}
       okText={
         editRequest
-          ? selectedSeasons.length === 0
+          ? editingSeasons.length === 0
             ? intl.formatMessage(messages.cancel)
             : hasPermission(Permission.MANAGE_REQUESTS)
               ? intl.formatMessage(messages.approve)
               : intl.formatMessage(messages.edit)
           : getAllRequestedSeasons().length >= getAllSeasons().length
             ? intl.formatMessage(messages.alreadyrequested)
-            : !settings.currentSettings.partialRequestsEnabled
+            : seasonsFromPicks.length > 0
               ? intl.formatMessage(
+                  is4k ? messages.requestseasons4k : messages.requestseasons,
+                  {
+                    seasonCount: seasonsFromPicks.length,
+                  }
+                )
+              : intl.formatMessage(
                   is4k ? globalMessages.request4k : globalMessages.request
                 )
-              : selectedSeasons.length === 0
-                ? intl.formatMessage(messages.selectseason)
-                : intl.formatMessage(
-                    is4k ? messages.requestseasons4k : messages.requestseasons,
-                    {
-                      seasonCount: selectedSeasons.length,
-                    }
-                  )
       }
       okDisabled={
         editRequest
           ? false
-          : !settings.currentSettings.partialRequestsEnabled &&
-              quota?.tv.limit &&
-              unrequestedSeasons.length > quota.tv.limit &&
+          : quota?.tv.limit &&
+              requestSeasons.length > quota.tv.limit &&
               !requestOverrides?.ignoreQuota
             ? true
-            : getAllRequestedSeasons().length >= getAllSeasons().length ||
-              (settings.currentSettings.partialRequestsEnabled &&
-                selectedSeasons.length === 0)
+            : getAllRequestedSeasons().length >= getAllSeasons().length
       }
       okButtonType={
         editRequest
-          ? settings.currentSettings.partialRequestsEnabled &&
-            selectedSeasons.length === 0
+          ? editingSeasons.length === 0
             ? 'danger'
             : hasPermission(Permission.MANAGE_REQUESTS)
               ? 'success'
@@ -545,44 +512,6 @@ const TvRequestModal = ({
               <table className="min-w-full">
                 <thead>
                   <tr>
-                    <th
-                      className={`w-16 bg-gray-700/80 px-4 py-3 ${
-                        !settings.currentSettings.partialRequestsEnabled &&
-                        'hidden'
-                      }`}
-                    >
-                      <span
-                        role="checkbox"
-                        tabIndex={0}
-                        aria-checked={isAllSeasons()}
-                        onClick={() => toggleAllSeasons()}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === 'Space') {
-                            toggleAllSeasons();
-                          }
-                        }}
-                        className={`relative inline-flex h-5 w-10 flex-shrink-0 cursor-pointer items-center justify-center pt-2 focus:outline-none ${
-                          quota?.tv.remaining &&
-                          quota.tv.limit &&
-                          quota.tv.remaining < unrequestedSeasons.length
-                            ? 'opacity-50'
-                            : ''
-                        }`}
-                      >
-                        <span
-                          aria-hidden="true"
-                          className={`${
-                            isAllSeasons() ? 'bg-indigo-500' : 'bg-gray-800'
-                          } absolute mx-auto h-4 w-9 rounded-full transition-colors duration-200 ease-in-out`}
-                        />
-                        <span
-                          aria-hidden="true"
-                          className={`${
-                            isAllSeasons() ? 'translate-x-5' : 'translate-x-0'
-                          } absolute left-0 inline-block h-5 w-5 rounded-full border border-gray-200 bg-white shadow transition-transform duration-200 ease-in-out group-focus:border-blue-300 group-focus:ring`}
-                        />
-                      </span>
-                    </th>
                     <th className="bg-gray-700/80 px-1 py-3 text-left text-xs font-medium uppercase leading-4 tracking-wider text-gray-200 md:px-6">
                       {intl.formatMessage(messages.season)}
                     </th>
@@ -625,72 +554,6 @@ const TvRequestModal = ({
                       return (
                         <Fragment key={`season-${season.id}`}>
                           <tr>
-                            <td
-                              className={`whitespace-nowrap px-4 py-4 text-sm font-medium leading-5 text-gray-100 ${
-                                !settings.currentSettings
-                                  .partialRequestsEnabled && 'hidden'
-                              }`}
-                            >
-                              <span
-                                role="checkbox"
-                                tabIndex={0}
-                                aria-checked={
-                                  !!mediaSeason ||
-                                  (!!seasonRequest &&
-                                    !editingSeasons.includes(
-                                      season.seasonNumber
-                                    )) ||
-                                  isSelectedSeason(season.seasonNumber)
-                                }
-                                onClick={() =>
-                                  toggleSeason(season.seasonNumber)
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' || e.key === 'Space') {
-                                    toggleSeason(season.seasonNumber);
-                                  }
-                                }}
-                                className={`relative inline-flex h-5 w-10 flex-shrink-0 cursor-pointer items-center justify-center pt-2 focus:outline-none ${
-                                  mediaSeason ||
-                                  (quota?.tv.limit &&
-                                    currentlyRemaining <= 0 &&
-                                    !isSelectedSeason(season.seasonNumber)) ||
-                                  (!!seasonRequest &&
-                                    !editingSeasons.includes(
-                                      season.seasonNumber
-                                    ))
-                                    ? 'opacity-50'
-                                    : ''
-                                }`}
-                              >
-                                <span
-                                  aria-hidden="true"
-                                  className={`${
-                                    !!mediaSeason ||
-                                    (!!seasonRequest &&
-                                      !editingSeasons.includes(
-                                        season.seasonNumber
-                                      )) ||
-                                    isSelectedSeason(season.seasonNumber)
-                                      ? 'bg-indigo-500'
-                                      : 'bg-gray-700'
-                                  } absolute mx-auto h-4 w-9 rounded-full transition-colors duration-200 ease-in-out`}
-                                />
-                                <span
-                                  aria-hidden="true"
-                                  className={`${
-                                    !!mediaSeason ||
-                                    (!!seasonRequest &&
-                                      !editingSeasons.includes(
-                                        season.seasonNumber
-                                      )) ||
-                                    isSelectedSeason(season.seasonNumber)
-                                      ? 'translate-x-5'
-                                      : 'translate-x-0'
-                                  } absolute left-0 inline-block h-5 w-5 rounded-full border border-gray-200 bg-white shadow transition-transform duration-200 ease-in-out group-focus:border-blue-300 group-focus:ring`}
-                                />
-                              </span>
-                            </td>
                             <td className="whitespace-nowrap px-1 py-4 text-sm font-medium leading-5 text-gray-100 md:px-6">
                               {season.seasonNumber === 0
                                 ? intl.formatMessage(globalMessages.specials)
@@ -763,7 +626,7 @@ const TvRequestModal = ({
                           {isExpanded && tvdbIdForSearch && (
                             <tr>
                               <td
-                                colSpan={5}
+                                colSpan={4}
                                 className="bg-gray-800/40 px-4 py-4"
                               >
                                 <InteractiveSearch
@@ -772,24 +635,10 @@ const TvRequestModal = ({
                                   tvdbId={tvdbIdForSearch}
                                   season={season.seasonNumber}
                                   serverId={requestOverrides?.server}
-                                  selectedGuid={selectedRelease?.guid ?? null}
-                                  onSelect={(r) => {
-                                    setSelectedRelease(r);
-                                    // Picking a release implies wanting that
-                                    // season; make sure it is part of the
-                                    // request when partial requests are on.
-                                    if (
-                                      r?.season !== undefined &&
-                                      settings.currentSettings
-                                        .partialRequestsEnabled
-                                    ) {
-                                      setSelectedSeasons((prev) =>
-                                        prev.includes(r.season as number)
-                                          ? prev
-                                          : [...prev, r.season as number]
-                                      );
-                                    }
-                                  }}
+                                  selectedGuids={selectedReleases.map(
+                                    (release) => release.guid
+                                  )}
+                                  onSelect={handleSelectRelease}
                                 />
                               </td>
                             </tr>

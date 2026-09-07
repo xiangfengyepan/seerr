@@ -408,8 +408,14 @@ const MovieRequestModal = ({
               mediaType="movie"
               tmdbId={data.id}
               serverId={requestOverrides?.server}
-              selectedGuid={selectedRelease?.guid ?? null}
-              onSelect={setSelectedRelease}
+              selectedGuids={selectedRelease ? [selectedRelease.guid] : []}
+              onSelect={(release) =>
+                setSelectedRelease((prev) =>
+                  prev && release && prev.guid === release.guid
+                    ? null
+                    : release
+                )
+              }
             />
           </div>
         )}

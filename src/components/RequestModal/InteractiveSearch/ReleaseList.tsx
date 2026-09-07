@@ -11,7 +11,7 @@ import {
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/solid';
 import type { ParsedRelease } from '@server/interfaces/api/interactiveSearchInterfaces';
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useMemo } from 'react';
 import { useIntl } from 'react-intl';
 
 const messages = defineMessages('components.RequestModal.InteractiveSearch', {
@@ -28,7 +28,7 @@ const messages = defineMessages('components.RequestModal.InteractiveSearch', {
   nofilteredreleases: 'No releases match the selected filters.',
 });
 
-const ANY = '__any__';
+export const ANY = '__any__';
 
 // A release the user picked in the modal. It is NOT grabbed on selection; it is
 // carried on the request and grabbed only when the user hits Request (and, for
@@ -42,6 +42,62 @@ export interface SelectedRelease {
   episodeId?: number;
 }
 
+// The three release filters, shared across the whole interactive search (the
+// season list and every per-episode list) so a single choice applies to all.
+export interface ReleaseFilters {
+  quality: string;
+  language: string;
+  codec: string;
+}
+
+export const emptyReleaseFilters: ReleaseFilters = {
+  quality: ANY,
+  language: ANY,
+  codec: ANY,
+};
+
+/** Distinct, sorted option lists for each filter, derived from releases. */
+export const computeFilterOptions = (results?: ParsedRelease[]) => ({
+  quality: Array.from(
+    new Set((results ?? []).map((r) => r.videoQuality).filter(Boolean))
+  ).sort(),
+  language: Array.from(
+    new Set((results ?? []).flatMap((r) => r.audioLanguages))
+  ).sort(),
+  codec: Array.from(
+    new Set(
+      (results ?? []).map((r) => r.audioCodec).filter((c): c is string => !!c)
+    )
+  ).sort(),
+});
+
+/** Apply the shared filters to a release list. Quality is a STRICT gate;
+ * language and codec are best-effort (unknown values are never hidden). */
+export const applyReleaseFilters = (
+  results: ParsedRelease[] | undefined,
+  filters: ReleaseFilters
+): ParsedRelease[] =>
+  (results ?? []).filter((release) => {
+    if (filters.quality !== ANY && release.videoQuality !== filters.quality) {
+      return false;
+    }
+    if (
+      filters.language !== ANY &&
+      release.audioLanguages.length > 0 &&
+      !release.audioLanguages.includes(filters.language)
+    ) {
+      return false;
+    }
+    if (
+      filters.codec !== ANY &&
+      release.audioCodec !== null &&
+      release.audioCodec !== filters.codec
+    ) {
+      return false;
+    }
+    return true;
+  });
+
 interface ReleaseListProps {
   mediaType: 'movie' | 'tv';
   serverId?: number;
@@ -52,9 +108,13 @@ interface ReleaseListProps {
   results?: ParsedRelease[];
   isLoading: boolean;
   error?: unknown;
-  /** guid of the currently selected release, shared across every release list
-   * in the modal so at most one can be selected at a time. */
-  selectedGuid?: string | null;
+  /** Shared filter values, owned by the top-level interactive search. */
+  filters: ReleaseFilters;
+  /** guids of every currently selected release across the whole modal. A
+   * release renders as "Selected" when its guid is in this list. Movies pass a
+   * 0/1-length list (single select); TV accumulates one pick per episode plus an
+   * optional whole-season pack. */
+  selectedGuids?: string[];
   onSelect?: (release: SelectedRelease | null) => void;
 }
 
@@ -130,83 +190,72 @@ const FilterDropdown = ({
   );
 };
 
+/**
+ * The shared filter bar. Rendered ONCE at the top of the interactive search;
+ * the chosen values apply to the season list and every per-episode list. The
+ * `options` are derived once (from the season results) by the parent.
+ */
+export const FilterBar = ({
+  filters,
+  options,
+  onChange,
+}: {
+  filters: ReleaseFilters;
+  options: { quality: string[]; language: string[]; codec: string[] };
+  onChange: (filters: ReleaseFilters) => void;
+}) => {
+  const intl = useIntl();
+  const anyLabel = intl.formatMessage(messages.any);
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <FilterDropdown
+        label={intl.formatMessage(messages.videoquality)}
+        value={filters.quality}
+        options={options.quality}
+        onChange={(quality) => onChange({ ...filters, quality })}
+        anyLabel={anyLabel}
+      />
+      <FilterDropdown
+        label={intl.formatMessage(messages.audiolanguage)}
+        value={filters.language}
+        options={options.language}
+        onChange={(language) => onChange({ ...filters, language })}
+        anyLabel={anyLabel}
+      />
+      <FilterDropdown
+        label={intl.formatMessage(messages.audiocodec)}
+        value={filters.codec}
+        options={options.codec}
+        onChange={(codec) => onChange({ ...filters, codec })}
+        anyLabel={anyLabel}
+      />
+    </div>
+  );
+};
+
 const ReleaseList = ({
   seasonNumber,
   episodeId,
   results,
   isLoading,
   error,
-  selectedGuid,
+  filters,
+  selectedGuids,
   onSelect,
 }: ReleaseListProps) => {
   const intl = useIntl();
-  const [qualityFilter, setQualityFilter] = useState<string>(ANY);
-  const [languageFilter, setLanguageFilter] = useState<string>(ANY);
-  const [codecFilter, setCodecFilter] = useState<string>(ANY);
-
-  const qualityOptions = useMemo(
-    () =>
-      Array.from(
-        new Set((results ?? []).map((r) => r.videoQuality).filter(Boolean))
-      ).sort(),
-    [results]
-  );
-  const languageOptions = useMemo(
-    () =>
-      Array.from(
-        new Set((results ?? []).flatMap((r) => r.audioLanguages))
-      ).sort(),
-    [results]
-  );
-  const codecOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (results ?? [])
-            .map((r) => r.audioCodec)
-            .filter((c): c is string => !!c)
-        )
-      ).sort(),
-    [results]
-  );
 
   const filteredResults = useMemo(
-    () =>
-      (results ?? []).filter((release) => {
-        // Video quality is a STRICT gate.
-        if (qualityFilter !== ANY && release.videoQuality !== qualityFilter) {
-          return false;
-        }
-        // Audio language is BEST-EFFORT: never hide a release whose languages
-        // are unknown (empty).
-        if (
-          languageFilter !== ANY &&
-          release.audioLanguages.length > 0 &&
-          !release.audioLanguages.includes(languageFilter)
-        ) {
-          return false;
-        }
-        // Audio codec is BEST-EFFORT: never hide a release with an unknown
-        // (null) codec.
-        if (
-          codecFilter !== ANY &&
-          release.audioCodec !== null &&
-          release.audioCodec !== codecFilter
-        ) {
-          return false;
-        }
-        return true;
-      }),
-    [results, qualityFilter, languageFilter, codecFilter]
+    () => applyReleaseFilters(results, filters),
+    [results, filters]
   );
 
+  // The click always reports the clicked release; the parent decides whether it
+  // is a new pick, a replacement for the same episode/season-pack, or a toggle
+  // off (re-selecting the same release). This keeps the multi-select rules in
+  // one place (the modal) and lets movies reuse the same list for single select.
   const select = (release: ParsedRelease) => {
     if (!onSelect) {
-      return;
-    }
-    // Toggle: re-selecting the chosen release clears the selection.
-    if (selectedGuid === release.guid) {
-      onSelect(null);
       return;
     }
     onSelect({
@@ -244,34 +293,8 @@ const ReleaseList = ({
     );
   }
 
-  const anyLabel = intl.formatMessage(messages.any);
-
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <FilterDropdown
-          label={intl.formatMessage(messages.videoquality)}
-          value={qualityFilter}
-          options={qualityOptions}
-          onChange={setQualityFilter}
-          anyLabel={anyLabel}
-        />
-        <FilterDropdown
-          label={intl.formatMessage(messages.audiolanguage)}
-          value={languageFilter}
-          options={languageOptions}
-          onChange={setLanguageFilter}
-          anyLabel={anyLabel}
-        />
-        <FilterDropdown
-          label={intl.formatMessage(messages.audiocodec)}
-          value={codecFilter}
-          options={codecOptions}
-          onChange={setCodecFilter}
-          anyLabel={anyLabel}
-        />
-      </div>
-
       {filteredResults.length === 0 ? (
         <div className="py-6 text-center text-sm text-gray-400">
           {intl.formatMessage(messages.nofilteredreleases)}
@@ -279,7 +302,7 @@ const ReleaseList = ({
       ) : (
         <ul className="space-y-2">
           {filteredResults.map((release) => {
-            const isSelected = selectedGuid === release.guid;
+            const isSelected = selectedGuids?.includes(release.guid) ?? false;
             return (
               <li
                 key={release.guid}
