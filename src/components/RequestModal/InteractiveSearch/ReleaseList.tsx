@@ -18,6 +18,7 @@ const messages = defineMessages('components.RequestModal.InteractiveSearch', {
   searchingindexers: 'Searching indexers… this can take a while.',
   noreleases: 'No releases found.',
   videoquality: 'Video Quality',
+  source: 'Source',
   audiolanguage: 'Audio Language',
   audiocodec: 'Audio Codec',
   any: 'Any',
@@ -52,12 +53,14 @@ export interface SelectedRelease {
 // season list and every per-episode list) so a single choice applies to all.
 export interface ReleaseFilters {
   quality: string;
+  source: string;
   language: string;
   codec: string;
 }
 
 export const emptyReleaseFilters: ReleaseFilters = {
   quality: ANY,
+  source: ANY,
   language: ANY,
   codec: ANY,
 };
@@ -66,6 +69,13 @@ export const emptyReleaseFilters: ReleaseFilters = {
 export const computeFilterOptions = (results?: ParsedRelease[]) => ({
   quality: Array.from(
     new Set((results ?? []).map((r) => r.videoQuality).filter(Boolean))
+  ).sort(),
+  source: Array.from(
+    new Set(
+      (results ?? [])
+        .map((r) => r.source)
+        .filter((s) => Boolean(s) && s !== 'Unknown')
+    )
   ).sort(),
   language: Array.from(
     new Set((results ?? []).flatMap((r) => r.audioLanguages))
@@ -85,6 +95,14 @@ export const applyReleaseFilters = (
 ): ParsedRelease[] =>
   (results ?? []).filter((release) => {
     if (filters.quality !== ANY && release.videoQuality !== filters.quality) {
+      return false;
+    }
+    // Source is best-effort: never hide a release whose source is unknown.
+    if (
+      filters.source !== ANY &&
+      release.source !== 'Unknown' &&
+      release.source !== filters.source
+    ) {
       return false;
     }
     if (
@@ -207,18 +225,30 @@ export const FilterBar = ({
   onChange,
 }: {
   filters: ReleaseFilters;
-  options: { quality: string[]; language: string[]; codec: string[] };
+  options: {
+    quality: string[];
+    source: string[];
+    language: string[];
+    codec: string[];
+  };
   onChange: (filters: ReleaseFilters) => void;
 }) => {
   const intl = useIntl();
   const anyLabel = intl.formatMessage(messages.any);
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <FilterDropdown
         label={intl.formatMessage(messages.videoquality)}
         value={filters.quality}
         options={options.quality}
         onChange={(quality) => onChange({ ...filters, quality })}
+        anyLabel={anyLabel}
+      />
+      <FilterDropdown
+        label={intl.formatMessage(messages.source)}
+        value={filters.source}
+        options={options.source}
+        onChange={(source) => onChange({ ...filters, source })}
         anyLabel={anyLabel}
       />
       <FilterDropdown
