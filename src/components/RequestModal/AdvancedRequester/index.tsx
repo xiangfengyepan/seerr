@@ -383,57 +383,11 @@ const AdvancedRequester = ({
                 </select>
               </div>
             )}
-            {(isValidating ||
-              !serverData ||
-              serverData.profiles.length > 1) && (
-              <div className="mb-3 w-full flex-shrink-0 flex-grow last:pr-0 md:w-1/4 md:pr-4">
-                <label htmlFor="profile">
-                  {intl.formatMessage(messages.qualityprofile)}
-                </label>
-                <select
-                  id="profile"
-                  name="profile"
-                  value={selectedProfile}
-                  onChange={(e) => setSelectedProfile(Number(e.target.value))}
-                  onBlur={(e) => setSelectedProfile(Number(e.target.value))}
-                  className="border-gray-700 bg-gray-800"
-                  disabled={isValidating || !serverData}
-                >
-                  {(isValidating || !serverData) && (
-                    <option value="">
-                      {intl.formatMessage(globalMessages.loading)}
-                    </option>
-                  )}
-                  {!isValidating &&
-                    serverData &&
-                    serverData.profiles
-                      .toSorted((a, b) =>
-                        a.name.localeCompare(b.name, intl.locale, {
-                          numeric: true,
-                          sensitivity: 'base',
-                        })
-                      )
-                      .map((profile) => (
-                        <option
-                          key={`profile-list${profile.id}`}
-                          value={profile.id}
-                        >
-                          {isAnime &&
-                          serverData.server.activeAnimeProfileId === profile.id
-                            ? intl.formatMessage(messages.default, {
-                                name: profile.name,
-                              })
-                            : !isAnime &&
-                                serverData.server.activeProfileId === profile.id
-                              ? intl.formatMessage(messages.default, {
-                                  name: profile.name,
-                                })
-                              : profile.name}
-                        </option>
-                      ))}
-                </select>
-              </div>
-            )}
+            {/* Quality Profile selector removed from the UI for ALL users
+              (including admins): quality is now chosen via the interactive
+              release search, so this dropdown is unused. `selectedProfile` is
+              still initialised to the server's default profile below, so
+              non-interactive requests keep using that default. */}
             {(isValidating ||
               !serverData ||
               serverData.rootFolders.length > 1) && (
