@@ -1,5 +1,7 @@
 import Button from '@app/components/Common/Button';
-import ReleaseList from '@app/components/RequestModal/InteractiveSearch/ReleaseList';
+import ReleaseList, {
+  type SelectedRelease,
+} from '@app/components/RequestModal/InteractiveSearch/ReleaseList';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/solid';
@@ -26,7 +28,8 @@ interface InteractiveSearchProps {
   season?: number;
   episodeId?: number;
   serverId?: number;
-  onGrab?: () => void;
+  selectedGuid?: string | null;
+  onSelect?: (release: SelectedRelease | null) => void;
 }
 
 const buildUrl = ({
@@ -76,14 +79,16 @@ const EpisodeSearch = ({
   season,
   episodeId,
   serverId,
-  onGrab,
+  selectedGuid,
+  onSelect,
 }: {
   tmdbId?: number;
   tvdbId: number;
   season: number;
   episodeId: number;
   serverId?: number;
-  onGrab?: () => void;
+  selectedGuid?: string | null;
+  onSelect?: (release: SelectedRelease | null) => void;
 }) => {
   const intl = useIntl();
   const [expanded, setExpanded] = useState(false);
@@ -111,7 +116,8 @@ const EpisodeSearch = ({
             season={season}
             episodeId={episodeId}
             serverId={serverId}
-            onGrab={onGrab}
+            selectedGuid={selectedGuid}
+            onSelect={onSelect}
           />
         </div>
       )}
@@ -153,7 +159,8 @@ const InteractiveSearch = (props: InteractiveSearchProps) => {
         results={data?.results}
         isLoading={isLoading}
         error={error}
-        onGrab={props.onGrab}
+        selectedGuid={props.selectedGuid}
+        onSelect={props.onSelect}
       />
 
       {isSeason && episodes.length > 0 && (
@@ -186,7 +193,8 @@ const InteractiveSearch = (props: InteractiveSearchProps) => {
                     season={episode.seasonNumber}
                     episodeId={episode.id}
                     serverId={resolvedServerId}
-                    onGrab={props.onGrab}
+                    selectedGuid={props.selectedGuid}
+                    onSelect={props.onSelect}
                   />
                 </div>
               </li>

@@ -2,7 +2,6 @@ import Badge from '@app/components/Common/Badge';
 import Button from '@app/components/Common/Button';
 import { SmallLoadingSpinner } from '@app/components/Common/LoadingSpinner';
 import Tooltip from '@app/components/Common/Tooltip';
-import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { formatBytes } from '@app/utils/numberHelpers';
@@ -11,11 +10,7 @@ import {
   ChevronDownIcon,
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/solid';
-import type {
-  GrabReleaseResponse,
-  ParsedRelease,
-} from '@server/interfaces/api/interactiveSearchInterfaces';
-import axios from 'axios';
+import type { ParsedRelease } from '@server/interfaces/api/interactiveSearchInterfaces';
 import { Fragment, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
 
@@ -26,17 +21,26 @@ const messages = defineMessages('components.RequestModal.InteractiveSearch', {
   audiolanguage: 'Audio Language',
   audiocodec: 'Audio Codec',
   any: 'Any',
-  grab: 'Grab',
-  grabbing: 'Grabbing…',
-  grabbed: 'Release grabbed successfully!',
-  grabpending: 'Your grab request is pending approval.',
-  graberror: 'Something went wrong while grabbing the release.',
+  select: 'Select',
+  selected: 'Selected',
   rejected: 'Rejected',
   seeders: '{count} seeders',
   nofilteredreleases: 'No releases match the selected filters.',
 });
 
 const ANY = '__any__';
+
+// A release the user picked in the modal. It is NOT grabbed on selection; it is
+// carried on the request and grabbed only when the user hits Request (and, for
+// non-admins, once an admin approves).
+export interface SelectedRelease {
+  guid: string;
+  indexerId: number;
+  /** Season the release belongs to (TV only). */
+  season?: number;
+  /** Sonarr episode id, when the release is for a single episode (TV only). */
+  episodeId?: number;
+}
 
 interface ReleaseListProps {
   mediaType: 'movie' | 'tv';
@@ -48,7 +52,10 @@ interface ReleaseListProps {
   results?: ParsedRelease[];
   isLoading: boolean;
   error?: unknown;
-  onGrab?: () => void;
+  /** guid of the currently selected release, shared across every release list
+   * in the modal so at most one can be selected at a time. */
+  selectedGuid?: string | null;
+  onSelect?: (release: SelectedRelease | null) => void;
 }
 
 interface FilterDropdownProps {
@@ -124,24 +131,18 @@ const FilterDropdown = ({
 };
 
 const ReleaseList = ({
-  mediaType,
-  serverId,
-  tmdbId,
-  tvdbId,
   seasonNumber,
   episodeId,
   results,
   isLoading,
   error,
-  onGrab,
+  selectedGuid,
+  onSelect,
 }: ReleaseListProps) => {
   const intl = useIntl();
-  const { addToast } = useToasts();
   const [qualityFilter, setQualityFilter] = useState<string>(ANY);
   const [languageFilter, setLanguageFilter] = useState<string>(ANY);
   const [codecFilter, setCodecFilter] = useState<string>(ANY);
-  const [grabbingGuid, setGrabbingGuid] = useState<string | null>(null);
-  const [grabbedGuids, setGrabbedGuids] = useState<string[]>([]);
 
   const qualityOptions = useMemo(
     () =>
@@ -199,45 +200,21 @@ const ReleaseList = ({
     [results, qualityFilter, languageFilter, codecFilter]
   );
 
-  const grab = async (release: ParsedRelease) => {
-    setGrabbingGuid(release.guid);
-    try {
-      const response = await axios.post<GrabReleaseResponse>(
-        '/api/v1/release/grab',
-        {
-          mediaType,
-          serverId,
-          guid: release.guid,
-          indexerId: release.indexerId,
-          tmdbId,
-          tvdbId,
-          seasonNumber,
-          episodeId,
-        }
-      );
-      setGrabbedGuids((prev) => [...prev, release.guid]);
-      addToast(
-        intl.formatMessage(
-          response.data.pendingApproval
-            ? messages.grabpending
-            : messages.grabbed
-        ),
-        {
-          appearance: response.data.pendingApproval ? 'info' : 'success',
-          autoDismiss: true,
-        }
-      );
-      if (onGrab) {
-        onGrab();
-      }
-    } catch {
-      addToast(intl.formatMessage(messages.graberror), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
-    } finally {
-      setGrabbingGuid(null);
+  const select = (release: ParsedRelease) => {
+    if (!onSelect) {
+      return;
     }
+    // Toggle: re-selecting the chosen release clears the selection.
+    if (selectedGuid === release.guid) {
+      onSelect(null);
+      return;
+    }
+    onSelect({
+      guid: release.guid,
+      indexerId: release.indexerId,
+      season: seasonNumber,
+      episodeId,
+    });
   };
 
   if (isLoading) {
@@ -302,13 +279,18 @@ const ReleaseList = ({
       ) : (
         <ul className="space-y-2">
           {filteredResults.map((release) => {
-            const isGrabbing = grabbingGuid === release.guid;
-            const isGrabbed = grabbedGuids.includes(release.guid);
+            const isSelected = selectedGuid === release.guid;
             return (
               <li
                 key={release.guid}
-                className={`rounded-md border border-gray-700 p-3 ${
-                  release.rejected ? 'bg-gray-800/40 opacity-60' : 'bg-gray-800'
+                className={`rounded-md border p-3 ${
+                  isSelected
+                    ? 'border-indigo-500 bg-gray-800 ring-1 ring-indigo-500'
+                    : 'border-gray-700'
+                } ${
+                  release.rejected && !isSelected
+                    ? 'bg-gray-800/40 opacity-60'
+                    : 'bg-gray-800'
                 }`}
               >
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -378,16 +360,13 @@ const ReleaseList = ({
                   </div>
                   <div className="flex-shrink-0">
                     <Button
-                      buttonType="primary"
+                      buttonType={isSelected ? 'primary' : 'default'}
                       buttonSize="sm"
-                      disabled={isGrabbing || isGrabbed}
-                      onClick={() => grab(release)}
+                      onClick={() => select(release)}
                     >
-                      {isGrabbed
-                        ? intl.formatMessage(messages.grabbed)
-                        : isGrabbing
-                          ? intl.formatMessage(messages.grabbing)
-                          : intl.formatMessage(messages.grab)}
+                      {intl.formatMessage(
+                        isSelected ? messages.selected : messages.select
+                      )}
                     </Button>
                   </div>
                 </div>

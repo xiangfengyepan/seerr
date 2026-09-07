@@ -27,4 +27,10 @@ export type MediaRequestBody = {
   userId?: number;
   tags?: number[];
   ignoreQuota?: boolean;
+  // Interactive search: a specific release the user picked in the modal. When
+  // present, the request is grabbed for THIS release on approval/auto-approve
+  // instead of running a fresh *arr auto-search.
+  grabReleaseGuid?: string;
+  grabReleaseIndexerId?: number;
+  grabEpisodeId?: number;
 };

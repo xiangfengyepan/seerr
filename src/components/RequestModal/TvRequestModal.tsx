@@ -5,6 +5,7 @@ import Modal from '@app/components/Common/Modal';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
 import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import InteractiveSearch from '@app/components/RequestModal/InteractiveSearch';
+import type { SelectedRelease } from '@app/components/RequestModal/InteractiveSearch/ReleaseList';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import SearchByNameModal from '@app/components/RequestModal/SearchByNameModal';
 import useSettings from '@app/hooks/useSettings';
@@ -88,6 +89,8 @@ const TvRequestModal = ({
     editRequest ? editingSeasons : []
   );
   const [expandedSeason, setExpandedSeason] = useState<number | null>(null);
+  const [selectedRelease, setSelectedRelease] =
+    useState<SelectedRelease | null>(null);
   const intl = useIntl();
   const { user, hasPermission } = useUser();
   const [searchModal, setSearchModal] = useState<{
@@ -213,6 +216,17 @@ const TvRequestModal = ({
           : getAllSeasons().filter(
               (season) => !getAllRequestedSeasons().includes(season)
             ),
+        // Interactive search: carry the chosen release (season- or episode-
+        // specific) so it is grabbed on approval instead of a fresh auto-search.
+        ...(selectedRelease
+          ? {
+              grabReleaseGuid: selectedRelease.guid,
+              grabReleaseIndexerId: selectedRelease.indexerId,
+              ...(selectedRelease.episodeId !== undefined
+                ? { grabEpisodeId: selectedRelease.episodeId }
+                : {}),
+            }
+          : {}),
         ...overrideParams,
       });
       mutate('/api/v1/request?filter=all&take=10&sort=modified&skip=0');
@@ -758,6 +772,24 @@ const TvRequestModal = ({
                                   tvdbId={tvdbIdForSearch}
                                   season={season.seasonNumber}
                                   serverId={requestOverrides?.server}
+                                  selectedGuid={selectedRelease?.guid ?? null}
+                                  onSelect={(r) => {
+                                    setSelectedRelease(r);
+                                    // Picking a release implies wanting that
+                                    // season; make sure it is part of the
+                                    // request when partial requests are on.
+                                    if (
+                                      r?.season !== undefined &&
+                                      settings.currentSettings
+                                        .partialRequestsEnabled
+                                    ) {
+                                      setSelectedSeasons((prev) =>
+                                        prev.includes(r.season as number)
+                                          ? prev
+                                          : [...prev, r.season as number]
+                                      );
+                                    }
+                                  }}
                                 />
                               </td>
                             </tr>

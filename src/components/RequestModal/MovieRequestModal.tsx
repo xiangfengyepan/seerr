@@ -4,6 +4,7 @@ import Modal from '@app/components/Common/Modal';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
 import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import InteractiveSearch from '@app/components/RequestModal/InteractiveSearch';
+import type { SelectedRelease } from '@app/components/RequestModal/InteractiveSearch/ReleaseList';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
@@ -61,6 +62,8 @@ const MovieRequestModal = ({
 }: RequestModalProps) => {
   const [isUpdating, setIsUpdating] = useState(false);
   const [showInteractiveSearch, setShowInteractiveSearch] = useState(false);
+  const [selectedRelease, setSelectedRelease] =
+    useState<SelectedRelease | null>(null);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
   const { addToast } = useToasts();
@@ -101,6 +104,15 @@ const MovieRequestModal = ({
         mediaType: 'movie',
         is4k,
         ignoreQuota: requestOverrides?.ignoreQuota,
+        // Interactive search: carry the chosen release so it is grabbed on
+        // approval instead of a fresh auto-search. Nothing is grabbed until
+        // this request is submitted.
+        ...(selectedRelease
+          ? {
+              grabReleaseGuid: selectedRelease.guid,
+              grabReleaseIndexerId: selectedRelease.indexerId,
+            }
+          : {}),
         ...overrideParams,
       });
       mutate('/api/v1/request?filter=all&take=10&sort=modified&skip=0');
@@ -141,6 +153,7 @@ const MovieRequestModal = ({
     }
   }, [
     requestOverrides,
+    selectedRelease,
     data?.id,
     data?.title,
     is4k,
@@ -395,6 +408,8 @@ const MovieRequestModal = ({
               mediaType="movie"
               tmdbId={data.id}
               serverId={requestOverrides?.server}
+              selectedGuid={selectedRelease?.guid ?? null}
+              onSelect={setSelectedRelease}
             />
           </div>
         )}

@@ -6536,6 +6536,15 @@ paths:
                   type: boolean
                   example: false
                   description: If true, this request will not count against the user's quota. Requires MANAGE_REQUESTS permission.
+                grabReleaseGuid:
+                  type: string
+                  description: Interactive search — the guid of a specific release the user selected. On approval/auto-approve this exact release is grabbed instead of running a fresh *arr auto-search.
+                grabReleaseIndexerId:
+                  type: number
+                  description: Interactive search — the indexer id of the selected release. Required alongside grabReleaseGuid.
+                grabEpisodeId:
+                  type: number
+                  description: Interactive search (TV) — the Sonarr episode id when the selected release is for a single episode rather than a whole season.
               required:
                 - mediaType
                 - mediaId

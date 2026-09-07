@@ -406,6 +406,10 @@ export class MediaRequest {
         tags: tags,
         isAutoRequest: options.isAutoRequest ?? false,
         ignoreQuota,
+        // Interactive search: grab this exact release on approval instead of a
+        // fresh Radarr auto-search.
+        grabReleaseGuid: requestBody.grabReleaseGuid ?? null,
+        grabReleaseIndexerId: requestBody.grabReleaseIndexerId ?? null,
       });
 
       await requestRepository.save(request);
@@ -539,6 +543,12 @@ export class MediaRequest {
         ),
         isAutoRequest: options.isAutoRequest ?? false,
         ignoreQuota,
+        // Interactive search: grab this exact release on approval instead of a
+        // fresh Sonarr auto-search. grabEpisodeId, when set, narrows the grab to
+        // a single episode.
+        grabReleaseGuid: requestBody.grabReleaseGuid ?? null,
+        grabReleaseIndexerId: requestBody.grabReleaseIndexerId ?? null,
+        grabEpisodeId: requestBody.grabEpisodeId ?? null,
       });
 
       await requestRepository.save(request);
