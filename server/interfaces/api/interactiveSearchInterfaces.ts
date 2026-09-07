@@ -17,6 +17,9 @@ export interface ParsedRelease {
   title: string;
   /** e.g. "2160p", "1080p", "720p", "480p", or "Unknown". */
   videoQuality: string;
+  /** Best-effort video codec (e.g. "HEVC", "H.264", "AV1") or null. Dominant
+   * factor in file size at a given resolution. */
+  videoCodec: string | null;
   /** e.g. "Bluray", "Remux", "WEB-DL", "WEBRip", "HDTV", "DVD", or "Unknown". */
   source: string;
   /** Raw *arr quality profile name for this release (e.g. "Bluray-1080p"). */

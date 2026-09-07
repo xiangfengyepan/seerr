@@ -94,6 +94,32 @@ export function parseSource(release: AnyRelease): string {
 }
 
 /**
+ * Best-effort video codec parse from the release title. Codec is the dominant
+ * factor in file size at a given resolution (HEVC/AV1 are far smaller than
+ * H.264 for the same quality), so surfacing it explains size differences the
+ * audio badges cannot. Order matters: specific tokens before generic ones.
+ */
+export function parseVideoCodec(title: string): string | null {
+  const patterns: [RegExp, string][] = [
+    [/\b(?:x[\s.-]?265|h[\s.-]?265|hevc)\b/i, 'HEVC'],
+    [/\b(?:x[\s.-]?264|h[\s.-]?264|avc)\b/i, 'H.264'],
+    [/\bav1\b/i, 'AV1'],
+    [/\bvp9\b/i, 'VP9'],
+    [/\bxvid\b/i, 'XviD'],
+    [/\bdivx\b/i, 'DivX'],
+    [/\b(?:mpeg[\s.-]?2|mpeg2)\b/i, 'MPEG-2'],
+    [/\bvc[\s.-]?1\b/i, 'VC-1'],
+  ];
+
+  for (const [pattern, label] of patterns) {
+    if (pattern.test(title)) {
+      return label;
+    }
+  }
+  return null;
+}
+
+/**
  * Best-effort audio codec parse from the release title.
  * Order matters: more specific tokens must be tested before generic ones.
  */
@@ -194,6 +220,7 @@ export function parseRelease(release: AnyRelease): ParsedRelease {
     indexer: release.indexer,
     title: release.title,
     videoQuality: parseVideoQuality(release),
+    videoCodec: parseVideoCodec(release.title),
     source: parseSource(release),
     qualityName: release.quality?.quality?.name ?? 'Unknown',
     audioLanguages: parseAudioLanguages(release.title, release.languages),

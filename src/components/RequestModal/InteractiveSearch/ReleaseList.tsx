@@ -347,6 +347,9 @@ const ReleaseList = ({
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
                       <Badge badgeType="primary">{release.videoQuality}</Badge>
+                      {release.videoCodec && (
+                        <Badge badgeType="light">{release.videoCodec}</Badge>
+                      )}
                       {release.source && release.source !== 'Unknown' && (
                         <Badge badgeType="light">{release.source}</Badge>
                       )}
