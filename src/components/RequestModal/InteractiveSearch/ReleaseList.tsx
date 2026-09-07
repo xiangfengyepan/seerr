@@ -11,7 +11,7 @@ import {
   ExclamationTriangleIcon,
 } from '@heroicons/react/24/solid';
 import type { ParsedRelease } from '@server/interfaces/api/interactiveSearchInterfaces';
-import { Fragment, useMemo } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
 
 const messages = defineMessages('components.RequestModal.InteractiveSearch', {
@@ -26,7 +26,13 @@ const messages = defineMessages('components.RequestModal.InteractiveSearch', {
   rejected: 'Rejected',
   seeders: '{count} seeders',
   nofilteredreleases: 'No releases match the selected filters.',
+  perpage: 'Per page',
+  pageinfo: 'Page {current} of {total}',
+  previous: 'Previous',
+  next: 'Next',
 });
+
+const PAGE_SIZE_OPTIONS = [5, 10, 25, 50];
 
 export const ANY = '__any__';
 
@@ -250,6 +256,22 @@ const ReleaseList = ({
     [results, filters]
   );
 
+  // Paginate the list (default 5 per page, changeable). Reset to page 1 when the
+  // filters or page size change, and clamp when the result count shrinks.
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(filteredResults.length / pageSize));
+  useEffect(() => {
+    setPage(1);
+  }, [filters, pageSize]);
+  useEffect(() => {
+    setPage((p) => Math.min(p, totalPages));
+  }, [totalPages]);
+  const pagedResults = useMemo(
+    () => filteredResults.slice((page - 1) * pageSize, page * pageSize),
+    [filteredResults, page, pageSize]
+  );
+
   // The click always reports the clicked release; the parent decides whether it
   // is a new pick, a replacement for the same episode/season-pack, or a toggle
   // off (re-selecting the same release). This keeps the multi-select rules in
@@ -300,9 +322,11 @@ const ReleaseList = ({
           {intl.formatMessage(messages.nofilteredreleases)}
         </div>
       ) : (
-        <ul className="space-y-2">
-          {filteredResults.map((release) => {
-            const isSelected = selectedGuids?.includes(release.guid) ?? false;
+        <>
+          <ul className="space-y-2">
+            {pagedResults.map((release) => {
+              const isSelected =
+                selectedGuids?.includes(release.guid) ?? false;
             return (
               <li
                 key={release.guid}
@@ -397,9 +421,50 @@ const ReleaseList = ({
                   </div>
                 </div>
               </li>
-            );
-          })}
-        </ul>
+              );
+            })}
+          </ul>
+          <div className="flex flex-col items-center justify-between gap-2 pt-1 sm:flex-row">
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <span>{intl.formatMessage(messages.perpage)}</span>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="rounded-md border border-gray-700 bg-gray-800 py-1 pl-2 pr-7 text-sm text-white focus:border-blue-300 focus:outline-none"
+              >
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-3 text-sm text-gray-300">
+              <Button
+                buttonType="default"
+                buttonSize="sm"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                {intl.formatMessage(messages.previous)}
+              </Button>
+              <span>
+                {intl.formatMessage(messages.pageinfo, {
+                  current: page,
+                  total: totalPages,
+                })}
+              </span>
+              <Button
+                buttonType="default"
+                buttonSize="sm"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                {intl.formatMessage(messages.next)}
+              </Button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
