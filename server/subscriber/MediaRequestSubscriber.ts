@@ -17,6 +17,7 @@ import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
+import type { GrabReleaseSelection } from '@server/interfaces/api/requestInterfaces';
 import notificationManager, { Notification } from '@server/lib/notifications';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
@@ -455,61 +456,92 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         (season) => season.seasonNumber
       );
 
-      let sonarrSeries: SonarrSeries;
+      // Build the list of releases to grab. A multi-pick list (one release per
+      // episode, plus optionally one whole-season pack) takes precedence; when
+      // absent we fall back to the single grabRelease* fields so the legacy
+      // single-pick path keeps working unchanged.
+      const selections: GrabReleaseSelection[] =
+        entity.grabReleases && entity.grabReleases.length > 0
+          ? entity.grabReleases
+          : entity.grabReleaseGuid
+            ? [
+                {
+                  guid: entity.grabReleaseGuid,
+                  indexerId: entity.grabReleaseIndexerId as number,
+                  ...(entity.grabEpisodeId !== null &&
+                  entity.grabEpisodeId !== undefined
+                    ? { episodeId: entity.grabEpisodeId }
+                    : {}),
+                },
+              ]
+            : [];
 
-      if (
-        entity.grabEpisodeId !== null &&
-        entity.grabEpisodeId !== undefined
-      ) {
-        // Per-episode grab: ensure the series exists, then monitor ONLY the
-        // chosen episode (no season-wide monitoring, no auto-search).
-        sonarrSeries = await sonarr.ensureSeries({
-          tvdbId,
-          title: series.name,
-          qualityProfileId: profileId,
-          languageProfileId: languageProfile,
-          rootFolderPath: rootFolder,
-          seasonFolder: sonarrSettings.enableSeasonFolders,
-          seriesType,
+      if (selections.length === 0) {
+        logger.warn('No releases selected for interactive Sonarr grab', {
+          label: 'Media Request',
+          requestId: entity.id,
+          mediaId: entity.media.id,
         });
-        await sonarr.monitorEpisodes([entity.grabEpisodeId]);
-      } else {
-        // Season-level grab: ensure the series exists and monitor the requested
-        // season(s) WITHOUT auto-search (reuses the standard season handling).
-        sonarrSeries = await sonarr.addSeries({
-          profileId,
-          languageProfileId: languageProfile,
-          rootFolderPath: rootFolder,
-          title: series.name,
-          tvdbid: tvdbId,
-          seasons: requestedSeasons,
-          seasonFolder: sonarrSettings.enableSeasonFolders,
-          seriesType,
-          tags: sonarrSettings.tags ? [...sonarrSettings.tags] : [],
-          monitored: true,
-          monitorNewItems: sonarrSettings.monitorNewItems,
-          searchNow: false,
+        return;
+      }
+
+      let sonarrSeries: SonarrSeries | undefined;
+
+      for (const selection of selections) {
+        if (
+          selection.episodeId !== null &&
+          selection.episodeId !== undefined
+        ) {
+          // Per-episode grab: ensure the series exists, then monitor ONLY the
+          // chosen episode (no season-wide monitoring, no auto-search).
+          sonarrSeries = await sonarr.ensureSeries({
+            tvdbId,
+            title: series.name,
+            qualityProfileId: profileId,
+            languageProfileId: languageProfile,
+            rootFolderPath: rootFolder,
+            seasonFolder: sonarrSettings.enableSeasonFolders,
+            seriesType,
+          });
+          await sonarr.monitorEpisodes([selection.episodeId]);
+        } else {
+          // Season-level grab: ensure the series exists and monitor the
+          // requested season(s) WITHOUT auto-search (reuses the standard season
+          // handling).
+          sonarrSeries = await sonarr.addSeries({
+            profileId,
+            languageProfileId: languageProfile,
+            rootFolderPath: rootFolder,
+            title: series.name,
+            tvdbid: tvdbId,
+            seasons: requestedSeasons,
+            seasonFolder: sonarrSettings.enableSeasonFolders,
+            seriesType,
+            tags: sonarrSettings.tags ? [...sonarrSettings.tags] : [],
+            monitored: true,
+            monitorNewItems: sonarrSettings.monitorNewItems,
+            searchNow: false,
+          });
+        }
+
+        await sonarr.grabRelease({
+          guid: selection.guid,
+          indexerId: selection.indexerId,
         });
       }
 
-      await sonarr.grabRelease({
-        guid: entity.grabReleaseGuid as string,
-        indexerId: entity.grabReleaseIndexerId as number,
-      });
-
-      if (sonarrSeries.id) {
+      if (sonarrSeries?.id) {
         media.externalServiceId = sonarrSeries.id;
         media.externalServiceSlug = sonarrSeries.titleSlug;
         media.serviceId = sonarrSettings.id;
         await mediaRepository.save(media);
       }
 
-      logger.info('Grabbed chosen release via Sonarr on approval', {
+      logger.info('Grabbed chosen release(s) via Sonarr on approval', {
         label: 'Media Request',
         requestId: entity.id,
         mediaId: entity.media.id,
-        indexerId: entity.grabReleaseIndexerId,
-        episodeId: entity.grabEpisodeId ?? undefined,
+        releaseCount: selections.length,
       });
     } catch (e) {
       logger.warn(
@@ -835,12 +867,15 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
       entity.status === MediaRequestStatus.APPROVED &&
       entity.type === MediaType.TV
     ) {
-      // Interactive-search approval: the user picked a specific release, so grab
-      // THAT release instead of running Sonarr's auto-search.
+      // Interactive-search approval: the user picked specific release(s), so
+      // grab THOSE instead of running Sonarr's auto-search. A multi-pick list
+      // (one per episode, plus optionally a season pack) takes precedence over
+      // the single grabRelease* fields.
       if (
-        entity.grabReleaseGuid &&
-        entity.grabReleaseIndexerId !== null &&
-        entity.grabReleaseIndexerId !== undefined
+        (entity.grabReleases && entity.grabReleases.length > 0) ||
+        (entity.grabReleaseGuid &&
+          entity.grabReleaseIndexerId !== null &&
+          entity.grabReleaseIndexerId !== undefined)
       ) {
         await this.grabSonarrRelease(entity);
         return;

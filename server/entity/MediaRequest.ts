@@ -8,7 +8,10 @@ import {
 } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import OverrideRule from '@server/entity/OverrideRule';
-import type { MediaRequestBody } from '@server/interfaces/api/requestInterfaces';
+import type {
+  GrabReleaseSelection,
+  MediaRequestBody,
+} from '@server/interfaces/api/requestInterfaces';
 import notificationManager, { Notification } from '@server/lib/notifications';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
@@ -549,6 +552,7 @@ export class MediaRequest {
         grabReleaseGuid: requestBody.grabReleaseGuid ?? null,
         grabReleaseIndexerId: requestBody.grabReleaseIndexerId ?? null,
         grabEpisodeId: requestBody.grabEpisodeId ?? null,
+        grabReleases: requestBody.grabReleases ?? null,
       });
 
       await requestRepository.save(request);
@@ -672,6 +676,14 @@ export class MediaRequest {
   // Null for movies and for season-level grabs.
   @Column({ type: 'integer', nullable: true })
   public grabEpisodeId?: number | null;
+
+  // Interactive-search grab (TV): the full list of releases the user picked, at
+  // most one per episode plus optionally one whole-season pack. When present,
+  // each entry is grabbed on approval and this takes precedence over the single
+  // grabRelease* fields above. Null for movies and for normal auto-search
+  // requests.
+  @Column({ type: 'simple-json', nullable: true })
+  public grabReleases?: GrabReleaseSelection[] | null;
 
   constructor(init?: Partial<MediaRequest>) {
     Object.assign(this, init);

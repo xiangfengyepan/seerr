@@ -6545,6 +6545,24 @@ paths:
                 grabEpisodeId:
                   type: number
                   description: Interactive search (TV) — the Sonarr episode id when the selected release is for a single episode rather than a whole season.
+                grabReleases:
+                  type: array
+                  description: Interactive search (TV) — multiple selected releases, at most one per episode plus optionally one whole-season pack. When present this takes precedence over the single grabRelease* fields, and each entry is grabbed on approval/auto-approve.
+                  items:
+                    type: object
+                    properties:
+                      guid:
+                        type: string
+                        description: The guid of the selected release.
+                      indexerId:
+                        type: number
+                        description: The indexer id of the selected release.
+                      episodeId:
+                        type: number
+                        description: The Sonarr episode id when this pick targets a single episode. Omitted for a whole-season pack.
+                    required:
+                      - guid
+                      - indexerId
               required:
                 - mediaType
                 - mediaId
