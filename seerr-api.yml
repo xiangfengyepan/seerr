@@ -7228,6 +7228,12 @@ paths:
             type: string
             enum: [added, modified, mediaAdded]
             default: added
+        - in: query
+          name: mediaType
+          schema:
+            type: string
+            nullable: true
+            enum: [movie, tv]
       responses:
         '200':
           description: Returned media
