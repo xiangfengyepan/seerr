@@ -19,6 +19,7 @@ const messages = defineMessages('components.RequestModal.InteractiveSearch', {
   noreleases: 'No releases found.',
   videoquality: 'Video Quality',
   source: 'Source',
+  videocodec: 'Video Codec',
   audiolanguage: 'Audio Language',
   audiocodec: 'Audio Codec',
   any: 'Any',
@@ -54,6 +55,7 @@ export interface SelectedRelease {
 export interface ReleaseFilters {
   quality: string;
   source: string;
+  videoCodec: string;
   language: string;
   codec: string;
 }
@@ -61,6 +63,7 @@ export interface ReleaseFilters {
 export const emptyReleaseFilters: ReleaseFilters = {
   quality: ANY,
   source: ANY,
+  videoCodec: ANY,
   language: ANY,
   codec: ANY,
 };
@@ -75,6 +78,13 @@ export const computeFilterOptions = (results?: ParsedRelease[]) => ({
       (results ?? [])
         .map((r) => r.source)
         .filter((s) => Boolean(s) && s !== 'Unknown')
+    )
+  ).sort(),
+  videoCodec: Array.from(
+    new Set(
+      (results ?? [])
+        .map((r) => r.videoCodec)
+        .filter((c): c is string => !!c)
     )
   ).sort(),
   language: Array.from(
@@ -102,6 +112,15 @@ export const applyReleaseFilters = (
       filters.source !== ANY &&
       release.source !== 'Unknown' &&
       release.source !== filters.source
+    ) {
+      return false;
+    }
+    // Video codec is best-effort: never hide a release with an unknown (null)
+    // codec.
+    if (
+      filters.videoCodec !== ANY &&
+      release.videoCodec !== null &&
+      release.videoCodec !== filters.videoCodec
     ) {
       return false;
     }
@@ -228,6 +247,7 @@ export const FilterBar = ({
   options: {
     quality: string[];
     source: string[];
+    videoCodec: string[];
     language: string[];
     codec: string[];
   };
@@ -236,7 +256,7 @@ export const FilterBar = ({
   const intl = useIntl();
   const anyLabel = intl.formatMessage(messages.any);
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       <FilterDropdown
         label={intl.formatMessage(messages.videoquality)}
         value={filters.quality}
@@ -249,6 +269,13 @@ export const FilterBar = ({
         value={filters.source}
         options={options.source}
         onChange={(source) => onChange({ ...filters, source })}
+        anyLabel={anyLabel}
+      />
+      <FilterDropdown
+        label={intl.formatMessage(messages.videocodec)}
+        value={filters.videoCodec}
+        options={options.videoCodec}
+        onChange={(videoCodec) => onChange({ ...filters, videoCodec })}
         anyLabel={anyLabel}
       />
       <FilterDropdown
