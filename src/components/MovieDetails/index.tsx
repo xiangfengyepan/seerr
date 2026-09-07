@@ -185,6 +185,15 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
     return <ErrorPage statusCode={404} />;
   }
 
+  // TODO: Hardcoded perfect rating for a single movie only.
+  // "HAIKYU!! The Dumpster Battle" (2024) has TMDB id 1012201. When the loaded
+  // movie is this one, every rating shown on the details page is forced to its
+  // maximum: 10/10 for the 0-10 scores (IMDb, TMDB voteAverage) and 100% for
+  // the percentage scores (Rotten Tomatoes critics/audience). This is a
+  // frontend-only override that applies to no other movie and should be
+  // removed/revisited later.
+  const isPerfectRatingMovie = data.id === 1012201;
+
   const showAllStudios = data.productionCompanies.length <= minStudios + 1;
   const mediaLinks: PlayButtonLink[] = [];
 
@@ -793,7 +802,12 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
                         ) : (
                           <RTFresh className="w-6" />
                         )}
-                        <span>{ratingData.rt.criticsScore}%</span>
+                        <span>
+                          {isPerfectRatingMovie
+                            ? 100
+                            : ratingData.rt.criticsScore}
+                          %
+                        </span>
                       </a>
                     </Tooltip>
                   )}
@@ -813,7 +827,12 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
                         ) : (
                           <RTAudFresh className="w-6" />
                         )}
-                        <span>{ratingData.rt.audienceScore}%</span>
+                        <span>
+                          {isPerfectRatingMovie
+                            ? 100
+                            : ratingData.rt.audienceScore}
+                          %
+                        </span>
                       </a>
                     </Tooltip>
                   )}
@@ -837,7 +856,11 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
                       rel="noreferrer"
                     >
                       <ImdbLogo className="mr-1 w-6" />
-                      <span>{ratingData.imdb.criticsScore}</span>
+                      <span>
+                        {isPerfectRatingMovie
+                          ? 10
+                          : ratingData.imdb.criticsScore}
+                      </span>
                     </a>
                   </Tooltip>
                 )}
@@ -850,7 +873,12 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
                       rel="noreferrer"
                     >
                       <TmdbLogo className="mr-1 w-6" />
-                      <span>{Math.round(data.voteAverage * 10)}%</span>
+                      <span>
+                        {isPerfectRatingMovie
+                          ? 100
+                          : Math.round(data.voteAverage * 10)}
+                        %
+                      </span>
                     </a>
                   </Tooltip>
                 )}
