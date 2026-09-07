@@ -221,13 +221,22 @@ interactiveSearchRoutes.get<
         });
       }
 
-      const [releases, allEpisodes] = await Promise.all([
-        sonarr.getReleasesBySeason({
-          seriesId: series.id,
-          seasonNumber,
-        }),
-        sonarr.getEpisodes(series.id),
-      ]);
+      // A series that was just added to Sonarr has no episodes until Sonarr
+      // finishes its initial refresh (populated asynchronously). Searching for
+      // releases before then returns nothing — the "first search finds nothing,
+      // a reload works" bug. Wait (bounded) for episodes to appear before
+      // searching. An already-populated series returns on the first try, so no
+      // delay is added in the common case.
+      let allEpisodes = await sonarr.getEpisodes(series.id);
+      for (let attempt = 0; allEpisodes.length === 0 && attempt < 12; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        allEpisodes = await sonarr.getEpisodes(series.id);
+      }
+
+      const releases = await sonarr.getReleasesBySeason({
+        seriesId: series.id,
+        seasonNumber,
+      });
 
       const episodes: ReleaseEpisode[] = allEpisodes
         .filter((ep) => ep.seasonNumber === seasonNumber)
